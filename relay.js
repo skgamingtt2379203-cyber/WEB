@@ -639,8 +639,7 @@ class NativeVoiceClient {
           const proposals = payload.subarray(1);
           const { commit, welcome } = this.daveSession.processProposals(
             optype,
-            proposals,
-            [String(this.userId)]
+            proposals
           );
           if (commit) {
             const commitWelcome = welcome ? Buffer.concat([commit, welcome]) : commit;
@@ -858,6 +857,21 @@ let soundpadTimer = null;
 function ensureMicBroadcastLoop() {
   if (micBroadcastTimer) return;
   micBroadcastTimer = setInterval(() => {
+    // Only broadcast if at least one client is fully connected and ready
+    let hasReadyClient = false;
+    for (const [, client] of activeClients) {
+      if (client.isReady && (!client.daveSession || client.daveSession.ready)) {
+        hasReadyClient = true;
+        break;
+      }
+    }
+
+    if (!hasReadyClient) {
+      // Discard buffered audio while connecting/transitioning so no stale, delayed audio ever plays
+      if (micQueue.length > 0) micQueue.length = 0;
+      return;
+    }
+
     if (micQueue.length > 0) {
       if (!micSpeakingActive) {
         micSpeakingActive = true;
@@ -866,17 +880,14 @@ function ensureMicBroadcastLoop() {
         }
       }
       micIdleTicks = 0;
-      // If queue is larger than 12 frames (>240ms), burst slightly to keep latency near real-time
-      const framesToSend = micQueue.length > 12 ? 2 : 1;
-      for (let f = 0; f < framesToSend && micQueue.length > 0; f++) {
-        const frame = micQueue.shift();
-        for (const [, client] of activeClients) {
-          if (client.isReady) {
-            client.sendRtpOpus(frame);
-          }
+      // Always transmit exactly 1 frame per 20ms tick for perfectly natural 1.0x real-time voice speed
+      const frame = micQueue.shift();
+      for (const [, client] of activeClients) {
+        if (client.isReady) {
+          client.sendRtpOpus(frame);
         }
-        if (currentSession) currentSession.packetsBroadcast = (currentSession.packetsBroadcast || 0) + 1;
       }
+      if (currentSession) currentSession.packetsBroadcast = (currentSession.packetsBroadcast || 0) + 1;
     } else {
       micIdleTicks++;
       // After ~240ms of silence (12 ticks of 20ms), deactivate speaking indicator
@@ -1022,8 +1033,8 @@ function handleIncomingMicAudio(buf) {
         micQueue.push(frame);
       }
     }
-    if (micQueue.length > 25) {
-      micQueue.splice(0, micQueue.length - 20);
+    if (micQueue.length > 5) {
+      micQueue.splice(0, micQueue.length - 3);
     }
   }
 }

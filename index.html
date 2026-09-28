@@ -1576,10 +1576,12 @@ function fmtTime(sec) {
   return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+let isFxPlaying = false;
 function isAnyAudioActive() {
   const isPlayingTrack = AUDIO_PLAYER.element && !AUDIO_PLAYER.element.paused && !AUDIO_PLAYER.element.ended;
   const isMicLive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
-  return !!(isPlayingTrack || isMicLive);
+  const isPadLive = typeof SP !== 'undefined' && SP.sounds && SP.sounds.some(s => s.playing);
+  return !!(isPlayingTrack || isMicLive || isPadLive || isFxPlaying);
 }
 
 function initAudioPlayerNodes() {
@@ -1897,7 +1899,8 @@ async function startMicStreamingToRelay() {
       if (!e.data || e.data.size === 0) return;
       const isMicActive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
       const isPlayerActive = AUDIO_PLAYER.isPlaying;
-      if (!isMicActive && !isPlayerActive) return;
+      const isPadActive = typeof SP !== 'undefined' && SP.sounds && SP.sounds.some(s => s.playing);
+      if (!isMicActive && !isPlayerActive && !isPadActive) return;
 
       if (MIC.ws && MIC.ws.readyState === 1) {
         try {
@@ -1912,7 +1915,7 @@ async function startMicStreamingToRelay() {
       }
     };
 
-    MIC.mediaRecorder.start(100);
+    MIC.mediaRecorder.start(40);
     MIC.activeBroadcasting = true;
     updateMicUiStatus();
     console.log('[Audio] Live media recorder broadcasting to Discord VC');
@@ -2323,7 +2326,18 @@ function stopAmp(){
 const SP={sounds:[],masterVol:1.0,masterGain:null};
 function getPadMasterGain(){
   if(!S.audioCtx)initAudio();
-  if(!SP.masterGain){SP.masterGain=S.audioCtx.createGain();SP.masterGain.gain.value=SP.masterVol;SP.masterGain.connect(S.audioCtx.destination);}
+  if(!SP.masterGain){
+    SP.masterGain=S.audioCtx.createGain();
+    SP.masterGain.gain.value=SP.masterVol;
+    SP.masterGain.connect(S.audioCtx.destination);
+    ensureDestNode();
+    if(MIC.analyserNode){
+      try{ SP.masterGain.connect(MIC.analyserNode); }catch(e){}
+    }
+    if(MIC.destNode){
+      try{ SP.masterGain.connect(MIC.destNode); }catch(e){}
+    }
+  }
   return SP.masterGain;
 }
 function updatePadMasterVol(val){SP.masterVol=parseFloat(val)/100;if(SP.masterGain)SP.masterGain.gain.value=SP.masterVol;}
@@ -2336,7 +2350,7 @@ function addPadSound(file){
     reader.onload=e=>{
       const idx=SP.sounds.length;
       const name=file.name.replace(/\.[^.]+$/,'').replace(/_/g,' ');
-      SP.sounds.push({name,data:e.target.result,volume:1,buffer:null,source:null,gainNode:null,playing:false,startTime:0,barTimer:null});
+      SP.sounds.push({name,data:e.target.result,volume:1,loop:false,buffer:null,source:null,gainNode:null,playing:false,startTime:0,barTimer:null});
       renderPadBtn(idx);
       if(S.audioCtx)S.audioCtx.decodeAudioData(e.target.result.slice(0),buf=>{SP.sounds[idx].buffer=buf;const el=document.getElementById('spad-dur-'+idx);if(el)el.textContent=fmtDur(buf.duration);},()=>{});
       resolve();
@@ -2352,11 +2366,25 @@ function renderPadBtn(idx){
   div.className='spad-btn';div.id='spad-btn-'+idx;
   div.onclick=e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='BUTTON')return;togglePadSound(idx);};
   const kh=idx<9?`<span class="spad-key">${idx+1}</span>`:'';
-  div.innerHTML=`${kh}<div class="spad-ico">&#127925;</div><input class="spad-name-inp" id="spad-name-${idx}" value="${esc(s.name)}" onclick="event.stopPropagation()" onchange="SP.sounds[${idx}].name=this.value" title="Rename"/><div class="spad-dur" id="spad-dur-${idx}">--</div><div class="spad-acts"><input type="range" class="spad-vol" min="0" max="200" value="100" onclick="event.stopPropagation()" oninput="setPadVol(${idx},this.value)"/><button class="ibtn" style="width:24px;height:24px;font-size:.68rem" onclick="event.stopPropagation();removePadSound(${idx})">&#128465;</button></div><div class="spad-bar" id="spad-bar-${idx}"></div>`;
+  const loopStyle = s.loop ? 'border-color:var(--accent);color:var(--accent);background:rgba(255,255,255,0.15)' : '';
+  div.innerHTML=`${kh}<div class="spad-ico">&#127925;</div><input class="spad-name-inp" id="spad-name-${idx}" value="${esc(s.name)}" onclick="event.stopPropagation()" onchange="SP.sounds[${idx}].name=this.value" title="Rename"/><div class="spad-dur" id="spad-dur-${idx}">--</div><div class="spad-acts"><button class="ibtn" id="spad-loop-${idx}" style="width:24px;height:24px;font-size:.68rem;${loopStyle}" onclick="event.stopPropagation();togglePadLoop(${idx})" title="Repeat / Loop Sound">&#128257;</button><input type="range" class="spad-vol" min="0" max="200" value="100" onclick="event.stopPropagation()" oninput="setPadVol(${idx},this.value)"/><button class="ibtn" style="width:24px;height:24px;font-size:.68rem" onclick="event.stopPropagation();removePadSound(${idx})">&#128465;</button></div><div class="spad-bar" id="spad-bar-${idx}"></div>`;
   grid.insertBefore(div,addBtn);
   if(S.audioCtx&&s.data)S.audioCtx.decodeAudioData(s.data.slice(0),buf=>{s.buffer=buf;const el=document.getElementById('spad-dur-'+idx);if(el)el.textContent=fmtDur(buf.duration);},()=>{});
 }
 function setPadVol(idx,val){const s=SP.sounds[idx];if(!s)return;s.volume=parseFloat(val)/100;if(s.gainNode)s.gainNode.gain.value=s.volume*SP.masterVol;}
+
+function togglePadLoop(idx){
+  const s=SP.sounds[idx];if(!s)return;
+  s.loop = !s.loop;
+  if(s.source) s.source.loop = s.loop;
+  const btn=document.getElementById('spad-loop-'+idx);
+  if(btn){
+    btn.style.borderColor = s.loop ? 'var(--accent)' : '';
+    btn.style.color = s.loop ? 'var(--accent)' : '';
+    btn.style.background = s.loop ? 'rgba(255,255,255,0.15)' : '';
+  }
+  toast(s.name + (s.loop ? ' set to Repeat/Loop 🔁' : ' Repeat disabled'), '🔁');
+}
 
 function broadcastPadSoundToVC(s){
   if(!s||!s.buffer)return;
@@ -2392,22 +2420,31 @@ async function togglePadSound(idx){
   if(S.audioCtx.state==='suspended')await S.audioCtx.resume();
   if(!s.buffer){try{s.buffer=await new Promise((res,rej)=>S.audioCtx.decodeAudioData(s.data.slice(0),res,rej));}catch(e){toast('Could not decode audio','X');return;}}
   const gainNode=S.audioCtx.createGain();gainNode.gain.value=s.volume*SP.masterVol;gainNode.connect(getPadMasterGain());
-  const source=S.audioCtx.createBufferSource();source.buffer=s.buffer;source.connect(gainNode);
+  const source=S.audioCtx.createBufferSource();source.buffer=s.buffer;
+  source.loop = !!s.loop;
+  source.connect(gainNode);
   s.source=source;s.gainNode=gainNode;s.playing=true;s.startTime=S.audioCtx.currentTime;
   const btn=document.getElementById('spad-btn-'+idx);if(btn)btn.classList.add('playing');
   const bar=document.getElementById('spad-bar-'+idx);
-  if(bar&&s.buffer.duration>0){s.barTimer=setInterval(()=>{const pct=Math.min(((S.audioCtx.currentTime-s.startTime)/s.buffer.duration)*100,100);bar.style.width=pct+'%';if(pct>=100)clearInterval(s.barTimer);},50);}
+  if(bar&&s.buffer.duration>0){s.barTimer=setInterval(()=>{const pct=Math.min(((S.audioCtx.currentTime-s.startTime)/s.buffer.duration)*100,100);bar.style.width=pct+'%';if(!s.loop&&pct>=100)clearInterval(s.barTimer);},50);}
   
-  // Stream audio into Discord Voice Channel via Relay
+  sendSpeakingState(true);
+  if(S.active && !MIC.activeBroadcasting) {
+    startMicStreamingToRelay();
+  }
+
+  // Stream audio into Discord Voice Channel via Relay fallback
   broadcastPadSoundToVC(s);
 
   source.onended=()=>{
+    if(s.loop) return;
     s.playing=false;s.source=null;s.gainNode=null;
     if(s.barTimer){clearInterval(s.barTimer);s.barTimer=null;}
     if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
     if(btn)btn.classList.remove('playing');
+    if(!isAnyAudioActive()) sendSpeakingState(false);
   };
-  source.start();toast('Playing: '+s.name,'&#127925;');
+  source.start();toast((s.loop ? '🔁 Repeating: ' : 'Playing: ')+s.name,'&#127925;');
 }
 function stopPadSound(idx){
   const s=SP.sounds[idx];if(!s||!s.playing)return;
