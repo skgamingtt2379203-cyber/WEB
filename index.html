@@ -1,0 +1,1999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>D4Hz WEB - Discord Voice Amplifier</title>
+<style>
+:root{
+  --bg:#080204;--red:#ff1a2e;--red2:#cc0018;
+  --red-glow:rgba(255,26,46,.45);--red-dim:rgba(255,26,46,.12);
+  --text:#fff;--muted:rgba(255,255,255,.55);--card:rgba(18,4,7,.92);
+  --border:rgba(255,26,46,.28);--success:#00e676;--warn:#ffaa00;--blue:#4a9eff;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;overflow-x:hidden}
+#bgc{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.neb{position:fixed;border-radius:50%;filter:blur(90px);z-index:0;pointer-events:none;animation:pulse 10s ease-in-out infinite}
+.neb1{width:700px;height:700px;background:radial-gradient(circle,rgba(180,0,30,.28) 0%,transparent 70%);top:-250px;left:50%;transform:translateX(-50%)}
+.neb2{width:500px;height:500px;background:radial-gradient(circle,rgba(100,0,20,.18) 0%,transparent 70%);bottom:0;right:-150px;animation-direction:reverse;animation-duration:14s}
+.neb3{width:350px;height:350px;background:radial-gradient(circle,rgba(150,0,25,.15) 0%,transparent 70%);top:40%;left:-100px;animation-duration:12s}
+@keyframes pulse{0%,100%{opacity:.7;scale:1}50%{opacity:1;scale:1.08}}
+
+/* PAGES */
+.page{position:relative;z-index:1;min-height:100vh;display:none;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px}
+.page.active{display:flex}
+
+/* LOGO */
+.logo-wrap{display:flex;flex-direction:column;align-items:center;margin-bottom:12px}
+.logo-icon{width:76px;height:76px;background:linear-gradient(135deg,#ff1a2e,#7a000f);border-radius:20px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 40px var(--red-glow);margin-bottom:18px;animation:ipulse 3s ease-in-out infinite}
+@keyframes ipulse{0%,100%{box-shadow:0 0 40px var(--red-glow)}50%{box-shadow:0 0 70px var(--red-glow),0 0 120px rgba(255,26,46,.2)}}
+.logo-bars{display:flex;align-items:flex-end;gap:4px;height:42px}
+.logo-bars span{background:#fff;border-radius:3px;width:6px;animation:bar 1.2s ease-in-out infinite}
+.logo-bars span:nth-child(1){height:18px;animation-delay:0s}
+.logo-bars span:nth-child(2){height:30px;animation-delay:.15s}
+.logo-bars span:nth-child(3){height:42px;animation-delay:.3s}
+.logo-bars span:nth-child(4){height:30px;animation-delay:.45s}
+.logo-bars span:nth-child(5){height:18px;animation-delay:.6s}
+@keyframes bar{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.35)}}
+.logo-title{font-size:3rem;font-weight:900;letter-spacing:7px;text-transform:uppercase}
+.logo-title .w{color:#fff}.logo-title .r{color:var(--red);text-shadow:0 0 24px rgba(255,26,46,.9)}
+.logo-sub{color:var(--muted);font-size:.9rem;letter-spacing:1px;margin-top:6px}
+
+/* CARDS */
+.cards-row{display:flex;gap:24px;margin-top:44px;flex-wrap:wrap;justify-content:center}
+.mode-card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:36px 30px;width:285px;cursor:pointer;transition:all .3s;position:relative;overflow:hidden}
+.mode-card::before{content:'';position:absolute;inset:0;background:var(--red-dim);opacity:0;transition:opacity .3s}
+.mode-card:hover::before{opacity:1}
+.mode-card:hover{border-color:var(--red);box-shadow:0 0 35px var(--red-glow),0 10px 40px rgba(0,0,0,.6);transform:translateY(-5px)}
+.card-icon{width:58px;height:58px;border-radius:15px;display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+.ci-a{background:linear-gradient(135deg,#ff1a2e,#7a000f)}
+.ci-b{background:transparent;border:2px solid var(--red)}
+.card-title{font-size:1.25rem;font-weight:900;letter-spacing:3px;text-transform:uppercase;color:var(--red);margin-bottom:12px;text-shadow:0 0 18px rgba(255,26,46,.5)}
+.card-desc{color:var(--muted);font-size:.85rem;line-height:1.65;margin-bottom:22px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:8px 20px;border-radius:100px;font-size:.76rem;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;border:none;transition:all .2s}
+.pill-o{background:transparent;border:1.5px solid var(--red);color:var(--red)}
+.pill-o:hover{background:var(--red);color:#fff;box-shadow:0 0 14px var(--red-glow)}
+.pill-o:disabled{opacity:.4;cursor:not-allowed}
+.pill-s{background:var(--red);color:#fff}
+.pill-s:hover{background:#ff3344;box-shadow:0 0 18px var(--red-glow)}
+.pill-s:disabled{opacity:.45;cursor:not-allowed}
+.card-arr{font-size:1.2rem;color:var(--muted);margin-top:10px}
+.or-div{display:flex;align-items:center;color:var(--muted);font-size:.85rem;padding:0 6px}
+.sec-note{margin-top:38px;color:var(--muted);font-size:.78rem;text-align:center}
+.sec-note strong{color:var(--text)}
+
+/* LAYOUT */
+.box{width:100%;max-width:820px}
+.bc{display:flex;align-items:center;gap:7px;font-size:.78rem;color:var(--muted);margin-bottom:22px;flex-wrap:wrap}
+.crumb{cursor:pointer;transition:color .2s}.crumb:hover{color:var(--red)}
+.acrumb{color:var(--text);font-weight:600}
+.sep{opacity:.35}
+.phdr{display:flex;align-items:center;gap:14px;margin-bottom:28px}
+.back{background:none;border:1px solid var(--border);color:var(--muted);width:40px;height:40px;border-radius:10px;cursor:pointer;font-size:1.1rem;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.back:hover{border-color:var(--red);color:var(--red);background:var(--red-dim)}
+.pttl{font-size:1.35rem;font-weight:900;letter-spacing:2px;text-transform:uppercase}
+.pttl span{color:var(--red)}
+.psub{color:var(--muted);font-size:.78rem;margin-top:3px}
+
+/* SECTION */
+.sec{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:26px;margin-bottom:18px}
+.slbl{font-size:.72rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--red);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.inp{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:10px;padding:11px 15px;color:var(--text);font-size:.9rem;font-family:monospace;outline:none;transition:border-color .2s,box-shadow .2s;width:100%}
+.inp:focus{border-color:var(--red);box-shadow:0 0 12px rgba(255,26,46,.2)}
+.inp::placeholder{color:rgba(255,255,255,.25)}
+.inp-row{display:flex;gap:10px;align-items:center}
+
+/* ACCOUNT LIST */
+.alist{display:flex;flex-direction:column;gap:11px}
+.aitem{background:rgba(255,26,46,.05);border:1px solid rgba(255,26,46,.2);border-radius:13px;padding:13px 18px;display:flex;align-items:center;gap:13px;animation:sIn .3s ease}
+@keyframes sIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.ava{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--red),#5c0010);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.95rem;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,26,46,.5);position:relative}
+.ava img{position:absolute;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.ainfo{flex:1;min-width:0}
+.aname{font-weight:700;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.atag{color:var(--muted);font-size:.78rem}
+.ast{display:flex;align-items:center;gap:5px;font-size:.74rem;margin-top:3px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.don{background:var(--success);box-shadow:0 0 5px var(--success)}
+.der{background:var(--red)}
+.aacts{display:flex;gap:7px;align-items:center}
+.ibtn{background:none;border:1px solid rgba(255,255,255,.12);color:var(--muted);width:30px;height:30px;border-radius:7px;cursor:pointer;font-size:.8rem;transition:all .2s;display:flex;align-items:center;justify-content:center}
+.ibtn:hover{border-color:var(--red);color:var(--red);background:var(--red-dim)}
+.badge{display:inline-flex;align-items:center;gap:3px;background:rgba(255,26,46,.14);border:1px solid rgba(255,26,46,.3);color:var(--red);font-size:.68rem;font-weight:800;padding:2px 8px;border-radius:100px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.badge-b{background:rgba(74,158,255,.1);border-color:rgba(74,158,255,.3);color:var(--blue)}
+.badge-g{background:rgba(0,230,118,.1);border-color:rgba(0,230,118,.3);color:var(--success)}
+
+/* EMPTY */
+.empty{text-align:center;padding:44px 20px;color:var(--muted)}
+.eico{font-size:2.8rem;margin-bottom:12px;opacity:.45}
+
+/* SERVERS */
+.sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:14px}
+.scard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px 16px;cursor:pointer;transition:all .25s;display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px}
+.scard:hover{border-color:var(--red);background:rgba(255,26,46,.08);box-shadow:0 0 22px rgba(255,26,46,.22);transform:translateY(-2px)}
+.sico{width:50px;height:50px;border-radius:13px;background:linear-gradient(135deg,#2a0008,#4d0010);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.1rem;border:1px solid rgba(255,26,46,.3);overflow:hidden}
+.sico img{width:100%;height:100%;object-fit:cover;border-radius:13px}
+.sname{font-size:.82rem;font-weight:700;line-height:1.3;word-break:break-word}
+
+/* SOUND FEATURES */
+.sgrd{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:600px){.sgrd{grid-template-columns:1fr}}
+.sfeat{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:11px;padding:14px 16px;transition:border-color .2s}
+.sfeat:hover{border-color:rgba(255,26,46,.3)}
+.sfhd{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.sfnm{font-size:.8rem;font-weight:700}
+.sfvl{font-size:.76rem;color:var(--red);font-weight:800;min-width:50px;text-align:right}
+.slider{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:rgba(255,255,255,.12);border-radius:2px;outline:none;cursor:pointer}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--red);cursor:pointer;box-shadow:0 0 8px var(--red-glow);transition:transform .15s}
+.slider::-webkit-slider-thumb:hover{transform:scale(1.3)}
+.slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--red);cursor:pointer;border:none}
+.twrap{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.tinfo{flex:1}.tnm{font-size:.8rem;font-weight:700}.tdesc{font-size:.72rem;color:var(--muted);margin-top:2px}
+.tsw{position:relative;width:40px;height:22px;flex-shrink:0}
+.tsw input{opacity:0;width:0;height:0}
+.tsw .trk{position:absolute;inset:0;background:rgba(255,255,255,.12);border-radius:11px;cursor:pointer;transition:background .3s}
+.tsw input:checked + .trk{background:var(--red);box-shadow:0 0 10px rgba(255,26,46,.4)}
+.tsw .trk::before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;border-radius:50%;background:#fff;transition:transform .3s;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.tsw input:checked + .trk::before{transform:translateX(18px)}
+
+/* TARGET SPEAKER */
+.tbox{display:flex;flex-wrap:wrap;gap:10px}
+.topt{flex:1;min-width:120px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:10px}
+.topt:hover,.topt.sel{border-color:var(--red);background:rgba(255,26,46,.1);box-shadow:0 0 10px rgba(255,26,46,.2)}
+.tava{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--red),#5c0010);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800;overflow:hidden;flex-shrink:0;border:2px solid rgba(255,26,46,.4);position:relative}
+.tava img{position:absolute;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.tnname{font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px}
+.trole{font-size:.7rem;color:var(--red);font-weight:700}
+.rdot{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);margin-left:auto;flex-shrink:0;transition:all .2s;display:flex;align-items:center;justify-content:center}
+.topt.sel .rdot{border-color:var(--red);background:var(--red)}
+.topt.sel .rdot::after{content:'';width:6px;height:6px;border-radius:50%;background:#fff;display:block}
+
+/* STATUS */
+.srow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.84rem}
+.srow:last-child{border-bottom:none}
+.smsg{color:var(--muted);margin-left:auto;font-size:.76rem}
+.pbar{height:4px;background:rgba(255,255,255,.09);border-radius:2px;overflow:hidden;margin-top:10px}
+.pfill{height:100%;background:linear-gradient(90deg,var(--red),#ff6680);border-radius:2px;transition:width .5s ease;width:0%}
+
+/* SPINNER */
+.spin{width:17px;height:17px;border:2px solid rgba(255,26,46,.25);border-top-color:var(--red);border-radius:50%;animation:sp .7s linear infinite;flex-shrink:0}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* BUTTONS */
+.bbtn{width:100%;padding:15px;border:none;border-radius:14px;color:#fff;font-size:.95rem;font-weight:900;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:all .25s;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px}
+.bbtn-r{background:linear-gradient(135deg,var(--red),#9b0014);box-shadow:0 4px 22px rgba(255,26,46,.4)}
+.bbtn-r:hover{background:linear-gradient(135deg,#ff3344,#c0001a);box-shadow:0 6px 32px rgba(255,26,46,.6);transform:translateY(-2px)}
+.bbtn-d{background:linear-gradient(135deg,#3a0008,#1a0004);border:1px solid rgba(255,26,46,.3)}
+.bbtn-d:hover{border-color:var(--red);box-shadow:0 4px 16px rgba(255,26,46,.25)}
+.rbet{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px;flex-wrap:wrap;gap:8px}
+.cnt{font-size:.8rem;color:var(--muted)}.cnt span{color:var(--red);font-weight:800}
+
+/* TOAST */
+.toast{position:fixed;bottom:28px;right:28px;background:#180406;border:1px solid var(--red);border-radius:13px;padding:13px 18px;display:none;align-items:center;gap:10px;font-size:.85rem;box-shadow:0 0 24px rgba(255,26,46,.3);z-index:300;max-width:310px;animation:tIn .3s ease}
+@keyframes tIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,26,46,.28);border-radius:3px}
+
+/* SOUNDPAD */
+.spad-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.spad-btn{background:rgba(255,26,46,.06);border:1px solid rgba(255,26,46,.22);border-radius:14px;padding:14px 12px 10px;cursor:pointer;transition:all .22s;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:6px;align-items:center;text-align:center;user-select:none;min-height:110px}
+.spad-btn:hover{border-color:var(--red);background:rgba(255,26,46,.14);box-shadow:0 0 18px rgba(255,26,46,.25);transform:translateY(-2px)}
+.spad-btn.playing{border-color:var(--success);background:rgba(0,230,118,.1);box-shadow:0 0 18px rgba(0,230,118,.3)}
+.spad-btn.playing::after{content:'';position:absolute;inset:0;background:radial-gradient(circle,rgba(0,230,118,.12) 0%,transparent 70%);animation:spr 1.1s ease-out infinite}
+@keyframes spr{0%{opacity:1;transform:scale(.85)}100%{opacity:0;transform:scale(1.35)}}
+.spad-key{position:absolute;top:6px;left:8px;font-size:.58rem;font-weight:900;color:rgba(255,255,255,.3);background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;border:1px solid rgba(255,255,255,.1)}
+.spad-ico{font-size:1.5rem;line-height:1}
+.spad-nm{font-size:.73rem;font-weight:700;color:#fff;word-break:break-word;max-width:100%;line-height:1.3}
+.spad-dur{font-size:.62rem;color:var(--muted)}
+.spad-bar{position:absolute;bottom:0;left:0;height:3px;background:linear-gradient(90deg,var(--success),#00b050);border-radius:0 0 14px 14px;width:0%}
+.spad-acts{display:flex;gap:4px;align-items:center;margin-top:2px}
+.spad-vol{width:56px;height:3px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,.15);border-radius:2px;outline:none;cursor:pointer}
+.spad-vol::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:var(--red);cursor:pointer}
+.spad-add{border:1.5px dashed rgba(255,26,46,.35);background:transparent;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;cursor:pointer;transition:all .22s;padding:18px 12px;min-height:110px}
+.spad-add:hover{border-color:var(--red);background:rgba(255,26,46,.06);box-shadow:0 0 14px rgba(255,26,46,.2)}
+.spad-name-inp{background:transparent;border:none;color:#fff;font-size:.73rem;font-weight:700;text-align:center;width:100%;outline:none;cursor:text;padding:0;font-family:inherit}
+.spad-name-inp:focus{border-bottom:1px solid rgba(255,26,46,.5)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+/* MODALS */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(10px);z-index:999;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal-box{background:var(--card);border:1px solid var(--border);box-shadow:0 0 50px rgba(255,26,46,.4),0 20px 60px rgba(0,0,0,.85);border-radius:20px;width:100%;max-width:540px;padding:26px;position:relative;animation:mUp .3s ease;max-height:90vh;overflow-y:auto}
+@keyframes mUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.modal-icon{width:46px;height:46px;border-radius:14px;background:linear-gradient(135deg,#ffaa00,#7a4500);display:flex;align-items:center;justify-content:center;font-size:1.3rem;box-shadow:0 0 25px rgba(255,170,0,.35);flex-shrink:0}
+.modal-title{font-size:1.15rem;font-weight:900;letter-spacing:2px;text-transform:uppercase}
+.modal-title span{color:var(--red)}
+.modal-sub{font-size:.76rem;color:var(--muted);margin-top:2px}
+.modal-info-row{display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,.03);border:1px solid rgba(255,26,46,.2);border-radius:12px;padding:12px 16px;margin-bottom:14px;gap:10px}
+.m-acc,.m-srv{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+
+@media(max-width:580px){.cards-row{flex-direction:column}.mode-card{width:100%}.logo-title{font-size:2.1rem}}
+</style>
+
+</head>
+<body>
+<canvas id="bgc"></canvas>
+<div class="neb neb1"></div>
+<div class="neb neb2"></div>
+<div class="neb neb3"></div>
+
+<!-- HOME -->
+<div class="page active" id="pg-home">
+  <div class="logo-wrap">
+    <div class="logo-icon">
+      <div class="logo-bars"><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
+    <div class="logo-title"><span class="w">D4Hz </span><span class="r">WEB</span></div>
+    <div class="logo-sub">Advanced Discord Voice Amplifier — choose your mode</div>
+  </div>
+  <div class="cards-row">
+    <div class="mode-card" onclick="goTo('pg-accounts')">
+      <div class="card-icon ci-a">
+        <svg viewBox="0 0 127.14 96.36" width="30" height="30" fill="white"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
+      </div>
+      <div class="card-title">Accounts</div>
+      <div class="card-desc">Add multiple user accounts. Pick one as the speaker — all others repeat and amplify that voice in VC.</div>
+      <button class="pill pill-o" onclick="event.stopPropagation();goTo('pg-accounts')">USER TOKENS</button>
+      <div class="card-arr">→</div>
+    </div>
+    <div class="or-div">OR</div>
+    <div class="mode-card" onclick="goTo('pg-bots')">
+      <div class="card-icon ci-b">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ff1a2e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="12" r="1.5" fill="#ff1a2e" stroke="none"/><circle cx="15" cy="12" r="1.5" fill="#ff1a2e" stroke="none"/><path d="M9 8V6M15 8V6"/></svg>
+      </div>
+      <div class="card-title">Bots</div>
+      <div class="card-desc">Add bot tokens. One bot speaks — all others relay and amplify through the official Bot API.</div>
+      <button class="pill pill-o" onclick="event.stopPropagation();goTo('pg-bots')">BOT TOKENS</button>
+      <div class="card-arr">→</div>
+    </div>
+  </div>
+  <div class="sec-note">Tokens are <strong>stored locally</strong> in your browser only — never sent anywhere</div>
+  <div style="margin-top:16px;text-align:center">
+    <button class="pill pill-o" style="font-size:.72rem;padding:6px 18px" onclick="openSecurityModal()">
+      🛡️ DISCORD SECURITY & GUIDELINES
+    </button>
+  </div>
+</div>
+
+<!-- ACCOUNTS -->
+<div class="page" id="pg-accounts">
+  <div class="box">
+    <div class="bc"><span class="crumb" onclick="goTo('pg-home')">Home</span><span class="sep">›</span><span class="acrumb">Accounts</span></div>
+    <div class="phdr">
+      <button class="back" onclick="goTo('pg-home')">←</button>
+      <div><div class="pttl"><span>ACCOUNT</span> MANAGER</div><div class="psub">One speaks → all others amplify</div></div>
+      <button class="pill pill-o" style="margin-left:auto;font-size:.68rem;padding:4px 12px" onclick="openSecurityModal()">🛡️ POLICY</button>
+    </div>
+
+    <!-- Discord ToS Advisory Banner -->
+    <div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);border-radius:12px;padding:12px 16px;margin-bottom:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="font-size:1.4rem">⚠️</span>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:.82rem;font-weight:800;color:var(--warn);letter-spacing:1px">DISCORD TERMS OF SERVICE ADVISORY</div>
+        <div style="font-size:.74rem;color:var(--muted);margin-top:2px;line-height:1.4">
+          Automating user accounts ("self-bots") violates Discord Terms of Service (Section 5). For 100% policy-compliant amplification, use official <strong>Bot Mode</strong>.
+        </div>
+      </div>
+      <button class="pill pill-o" style="font-size:.68rem;padding:5px 12px;border-color:var(--warn);color:var(--warn);white-space:nowrap" onclick="goTo('pg-bots')">
+        SWITCH TO BOT MODE →
+      </button>
+    </div>
+
+    <div class="sec">
+      <div class="slbl">🔑 Add User Token</div>
+      <div class="inp-row">
+        <input class="inp" type="password" id="acc-inp" placeholder="Paste Discord user token…" onkeydown="if(event.key==='Enter')addAcc()"/>
+        <button class="pill pill-s" onclick="addAcc()" id="acc-add-btn">+ ADD</button>
+      </div>
+      <div style="margin-top:9px;font-size:.72rem;color:rgba(255,255,255,.2)">⚠️ Stored locally in browser only</div>
+    </div>
+    <div class="rbet">
+      <div class="cnt">Accounts: <span id="acc-count">0</span></div>
+      <button class="pill pill-s" style="font-size:.72rem" id="acc-proc-btn" disabled onclick="procSrv('accounts')">SELECT SERVER →</button>
+    </div>
+    <div class="alist" id="accs-list">
+      <div class="empty"><div class="eico">👤</div><p>No accounts yet.<br>Paste a user token above.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTS -->
+<div class="page" id="pg-bots">
+  <div class="box">
+    <div class="bc"><span class="crumb" onclick="goTo('pg-home')">Home</span><span class="sep">›</span><span class="acrumb">Bots</span></div>
+    <div class="phdr">
+      <button class="back" onclick="goTo('pg-home')">←</button>
+      <div><div class="pttl"><span>BOT</span> MANAGER</div><div class="psub">One bot speaks → all others amplify</div></div>
+    </div>
+    <div class="sec">
+      <div class="slbl">🤖 Add Bot Token</div>
+      <div class="inp-row">
+        <input class="inp" type="password" id="bot-inp" placeholder="Paste Discord bot token…" onkeydown="if(event.key==='Enter')addBot()"/>
+        <button class="pill pill-s" onclick="addBot()" id="bot-add-btn">+ ADD</button>
+      </div>
+    </div>
+    <div class="rbet">
+      <div class="cnt">Bots: <span id="bot-count">0</span></div>
+      <button class="pill pill-s" style="font-size:.72rem" id="bot-proc-btn" disabled onclick="procSrv('bots')">SELECT SERVER →</button>
+    </div>
+    <div class="alist" id="bots-list">
+      <div class="empty"><div class="eico">🤖</div><p>No bots yet.<br>Paste a bot token above.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- SERVERS -->
+<div class="page" id="pg-servers">
+  <div class="box" style="max-width:900px">
+    <div class="bc"><span class="crumb" onclick="goTo('pg-home')">Home</span><span class="sep">›</span><span class="crumb" id="srv-bc" onclick="goTo('pg-'+S.mode)">Accounts</span><span class="sep">›</span><span class="acrumb">Servers</span></div>
+    <div class="phdr">
+      <button class="back" onclick="goTo('pg-'+S.mode)">←</button>
+      <div><div class="pttl">SELECT <span>SERVER</span></div><div class="psub" id="srv-sub">Loading…</div></div>
+    </div>
+
+    <!-- SERVERS LIST HEADER -->
+    <div class="rbet" style="margin-top:14px;margin-bottom:14px">
+      <div style="font-size:.8rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--muted)">
+        EXISTING SERVERS (<span id="srv-count" style="color:var(--red)">0</span>)
+      </div>
+      <button class="pill pill-o" style="font-size:.7rem;padding:4px 12px" onclick="refreshServers()" id="srv-ref-btn">🔄 REFRESH LIST</button>
+    </div>
+
+    <div class="sgrid" id="srv-grid">
+      <div class="empty" style="grid-column:1/-1"><div class="spin" style="margin:0 auto 12px"></div><p>Fetching servers…</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- VC AMPLIFIER -->
+<div class="page" id="pg-vc">
+  <div class="box">
+    <div class="bc"><span class="crumb" onclick="goTo('pg-home')">Home</span><span class="sep">›</span><span class="crumb" id="vc-bc1" onclick="goTo('pg-'+S.mode)">Accounts</span><span class="sep">›</span><span class="crumb" onclick="goTo('pg-servers')">Servers</span><span class="sep">›</span><span class="acrumb">Amplifier</span></div>
+    <div class="phdr">
+      <button class="back" onclick="goTo('pg-servers')">←</button>
+      <div><div class="pttl">VOICE <span>AMPLIFIER</span></div><div class="psub" id="vc-srv">—</div><div id="relay-status-badge" style="margin-top:4px;display:inline-flex;align-items:center;gap:6px;font-size:.7rem;padding:3px 10px;border-radius:20px;background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.3);color:var(--success);font-weight:700">🟢 VOICE RELAY: ACTIVE (Soundpad & Audio Repeating Online)</div></div>
+    </div>
+
+    <!-- VC ID -->
+    <div class="sec">
+      <div class="slbl">🎙️ Voice Channel Destination</div>
+      <div class="inp-row">
+        <input class="inp" type="text" id="vc-id" placeholder="Enter Discord Voice Channel ID (e.g. 123456789012345678)…"/>
+      </div>
+      <div style="margin-top:8px;font-size:.71rem;color:rgba(255,255,255,.35)">💡 Right-click voice channel in Discord → Copy Channel ID (Enable Developer Mode in Discord Settings → Advanced)</div>
+    </div>
+
+    <!-- LIVE MICROPHONE BROADCAST STUDIO -->
+    <div class="sec" id="mic-studio-sec" style="border-color:rgba(255,26,46,.4);background:linear-gradient(135deg,rgba(18,4,7,.95),rgba(28,4,9,.9))">
+      <div class="slbl" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="display:flex;align-items:center;gap:8px">
+          🎙️ Live Microphone Input &amp; Multi-Account Broadcast
+          <span class="badge badge-g" id="mic-live-badge" style="display:none">LIVE BROADCAST</span>
+          <span class="badge" id="mic-mute-badge" style="display:none;background:rgba(255,26,46,.2);border-color:var(--red);color:var(--red)">MUTED</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="pill pill-o" id="mic-test-btn" style="font-size:.68rem;padding:5px 12px" onclick="toggleMicMonitor()">
+            🎧 MONITOR (HEAR SELF)
+          </button>
+          <button class="pill pill-s" id="mic-mute-btn" style="font-size:.68rem;padding:5px 14px" onclick="toggleMicMute()">
+            🎙️ MUTE [M]
+          </button>
+        </div>
+      </div>
+
+      <div style="font-size:.73rem;color:rgba(255,255,255,.5);margin-bottom:16px;line-height:1.5">
+        Speak into your microphone — your voice is processed through the sound effects below and broadcasted through all connected accounts in real-time!
+      </div>
+
+      <!-- Device Selector & Input Mode -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div>
+          <label style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px">Audio Input Device</label>
+          <select class="inp" id="mic-device-select" onchange="onMicDeviceChanged(this.value)" style="padding:9px 12px;cursor:pointer;font-family:inherit">
+            <option value="default">Default System Microphone</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px">Transmission Mode</label>
+          <div style="display:flex;gap:8px">
+            <button class="pill pill-s" id="btn-mode-open" style="flex:1;font-size:.68rem;padding:8px" onclick="setMicTransmitMode('open')">
+              🎙️ Open Mic
+            </button>
+            <button class="pill pill-o" id="btn-mode-ptt" style="flex:1;font-size:.68rem;padding:8px" onclick="setMicTransmitMode('ptt')">
+              🔘 Push-To-Talk
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Push To Talk Hold Button (visible in PTT mode) -->
+      <div id="ptt-hold-container" style="display:none;margin-bottom:16px;text-align:center">
+        <button id="ptt-hold-btn" class="bbtn bbtn-r" style="margin-bottom:0;padding:16px;font-size:1rem;letter-spacing:2px;user-select:none"
+                onmousedown="startPttSpeaking()" onmouseup="stopPttSpeaking()"
+                ontouchstart="startPttSpeaking()" ontouchend="stopPttSpeaking()">
+          📢 HOLD TO TALK (SPACEBAR)
+        </button>
+        <div style="font-size:.7rem;color:var(--muted);margin-top:6px">Hold spacebar or click and hold while speaking</div>
+      </div>
+
+      <!-- Live VU Meter & Audio Visualizer Canvas -->
+      <div style="background:rgba(0,0,0,.6);border:1px solid rgba(255,26,46,.25);border-radius:12px;padding:12px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:.7rem;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px">
+            <span id="mic-status-led" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block"></span>
+            <span id="mic-status-text">MICROPHONE READY</span>
+          </div>
+          <div id="mic-level-db" style="font-size:.74rem;font-family:monospace;font-weight:800;color:var(--red)">-∞ dB</div>
+        </div>
+        <canvas id="mic-vu-canvas" width="600" height="26" style="width:100%;height:26px;display:block;border-radius:6px;background:rgba(255,255,255,.03)"></canvas>
+      </div>
+
+      <!-- Mic Gain & Enhancements -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="sfeat" style="padding:10px 14px">
+          <div class="sfhd"><div class="sfnm">🎙️ Mic Gain</div><div class="sfvl" id="mic-gain-v">100%</div></div>
+          <input type="range" class="slider" id="sl-mic-gain" min="0" max="300" value="100" oninput="setMicGain(this.value)"/>
+        </div>
+        <div class="sfeat" style="padding:10px 14px">
+          <div class="twrap">
+            <div class="tinfo"><div class="tnm">⚡ Noise Suppression</div></div>
+            <label class="tsw"><input type="checkbox" id="tog-mic-ns" checked onchange="updateMicConstraints()"/><span class="trk"></span></label>
+          </div>
+        </div>
+        <div class="sfeat" style="padding:10px 14px">
+          <div class="twrap">
+            <div class="tinfo"><div class="tnm">🛡️ Echo Cancel</div></div>
+            <label class="tsw"><input type="checkbox" id="tog-mic-ec" checked onchange="updateMicConstraints()"/><span class="trk"></span></label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DISCORD PROFILE ACTIVITY (RICH PRESENCE WITH DEATH.gif) -->
+    <div class="sec" id="discord-act-sec" style="border-color:rgba(255,26,46,.45);background:linear-gradient(135deg,rgba(18,4,7,.95),rgba(35,6,12,.92));box-shadow:0 0 25px rgba(255,26,46,.15)">
+      <div class="slbl" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="display:flex;align-items:center;gap:8px">
+          🎮 Discord Profile Activity
+          <span class="badge" style="background:rgba(0,230,118,.15);border-color:rgba(0,230,118,.4);color:var(--success);display:inline-flex;align-items:center;gap:5px">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 6px var(--success);display:inline-block"></span>
+            LIVE ON PROFILE
+          </span>
+          <span class="badge badge-b">DEATH.gif</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:.72rem;color:var(--muted);font-weight:700">ENABLE ACTIVITY</span>
+          <label class="tsw">
+            <input type="checkbox" id="tog-discord-act" checked onchange="toggleDiscordActivity(this.checked)"/>
+            <span class="trk"></span>
+          </label>
+        </div>
+      </div>
+
+      <div style="font-size:.73rem;color:rgba(255,255,255,.5);margin-bottom:16px;line-height:1.5">
+        Whenever you use D4Hz, this animated Rich Presence card appears on your Discord Profile across all devices with <code style="color:var(--red);background:rgba(255,26,46,.12);padding:2px 6px;border-radius:4px">DEATH.gif</code>.
+      </div>
+
+      <!-- DISCORD PROFILE PREVIEW CARD -->
+      <div style="background:rgba(10,12,16,.9);border:1px solid rgba(255,26,46,.25);border-radius:14px;padding:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;position:relative;overflow:hidden">
+        <!-- Glowing accent border effect -->
+        <div style="position:absolute;top:0;left:0;height:3px;width:100%;background:linear-gradient(90deg,var(--red),#7a000f,var(--red))"></div>
+
+        <!-- GIF Thumbnail with badge -->
+        <div style="position:relative;width:82px;height:82px;flex-shrink:0;border-radius:14px;overflow:hidden;border:2px solid rgba(255,26,46,.6);box-shadow:0 0 20px rgba(255,26,46,.45);background:#000">
+          <img id="d-act-img-preview" src="https://files.catbox.moe/fi131s.gif" alt="DEATH.gif" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.src='DEATH.gif'"/>
+          <!-- Mini D4Hz badge in corner -->
+          <div style="position:absolute;bottom:3px;right:3px;background:rgba(0,0,0,.85);border:1px solid var(--red);border-radius:6px;padding:1px 4px;font-size:.55rem;font-weight:900;color:var(--red);letter-spacing:.5px">D4Hz</div>
+        </div>
+
+        <!-- Rich Presence Info matching Discord's profile modal -->
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:.65rem;font-weight:900;letter-spacing:1.5px;color:var(--success);text-transform:uppercase;display:flex;align-items:center;gap:6px">
+            <span>🎮 PLAYING A GAME</span>
+            <span style="font-size:.6rem;color:rgba(255,255,255,.3)">• PROFILE ACTIVITY</span>
+          </div>
+          <div style="font-size:1.15rem;font-weight:900;color:#fff;margin-top:2px;letter-spacing:.5px">D4Hz</div>
+          <div id="d-act-details-preview" style="font-size:.82rem;color:rgba(255,255,255,.8);margin-top:2px;font-weight:500">D4Hz WEB — High Frequency Audio</div>
+          <div id="d-act-state-preview" style="font-size:.78rem;color:var(--red);margin-top:2px;font-weight:700">Voice Amplifier Active ⚡</div>
+          <div style="font-size:.72rem;color:rgba(255,255,255,.45);margin-top:5px;display:flex;align-items:center;gap:6px">
+            <span>⏱️</span>
+            <span id="d-act-timer">00:00 elapsed</span>
+            <span style="opacity:.3">|</span>
+            <span style="color:rgba(255,255,255,.35)">Discord Gateway &amp; Local RPC</span>
+          </div>
+        </div>
+
+        <!-- Action / Status -->
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;margin-left:auto">
+          <button class="pill pill-s" style="font-size:.72rem;padding:6px 14px" onclick="syncDiscordActivityNow()">
+            ⚡ UPDATE NOW
+          </button>
+          <button class="pill pill-o" style="font-size:.68rem;padding:5px 12px" onclick="launchDesktopRpc()">
+            🚀 DESKTOP RPC
+          </button>
+        </div>
+      </div>
+
+      <!-- Activity Customization Inputs -->
+      <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Activity Details</label>
+          <input class="inp" type="text" id="d-act-details-inp" value="D4Hz WEB — High Frequency Audio" oninput="D4HZ_DISCORD_ACTIVITY.details=this.value;renderActivityPreview()"/>
+        </div>
+        <div>
+          <label style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px">Activity State</label>
+          <input class="inp" type="text" id="d-act-state-inp" value="Voice Amplifier Active ⚡" oninput="D4HZ_DISCORD_ACTIVITY.state=this.value;renderActivityPreview()"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- SOUND FEATURES -->
+    <div class="sec">
+      <div class="slbl">🎛️ Sound Processing Features</div>
+      <div class="sgrd">
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🔊 Volume Boost</div><div class="sfvl" id="vol-v">100%</div></div>
+          <input type="range" class="slider" min="0" max="500" value="100" oninput="sv('vol','%',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🔈 Bass Boost</div><div class="sfvl" id="bass-v">0 dB</div></div>
+          <input type="range" class="slider" min="0" max="24" value="0" oninput="sv('bass',' dB',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🎚️ Mid Boost</div><div class="sfvl" id="mid-v">0 dB</div></div>
+          <input type="range" class="slider" min="-12" max="12" value="0" oninput="sv('mid',' dB',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">✨ Treble Boost</div><div class="sfvl" id="treble-v">0 dB</div></div>
+          <input type="range" class="slider" min="-12" max="12" value="0" oninput="sv('treble',' dB',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🎵 Pitch Shift</div><div class="sfvl" id="pitch-v">0 st</div></div>
+          <input type="range" class="slider" min="-12" max="12" value="0" oninput="sv('pitch',' st',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🌀 Echo Delay</div><div class="sfvl" id="echo-v">0 ms</div></div>
+          <input type="range" class="slider" min="0" max="800" value="0" oninput="sv('echo',' ms',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🏔️ Reverb</div><div class="sfvl" id="reverb-v">0%</div></div>
+          <input type="range" class="slider" min="0" max="100" value="0" oninput="sv('reverb','%',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">⚡ Distortion</div><div class="sfvl" id="dist-v">0%</div></div>
+          <input type="range" class="slider" min="0" max="100" value="0" oninput="sv('dist','%',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="twrap">
+            <div class="tinfo"><div class="tnm">🚫 Noise Gate</div><div class="tdesc">Cut background noise below threshold</div></div>
+            <label class="tsw"><input type="checkbox" id="tog-noise"/><span class="trk"></span></label>
+          </div>
+          <div style="margin-top:10px">
+            <input type="range" class="slider" id="sl-gate" min="-80" max="0" value="-40" oninput="document.getElementById('gate-v').textContent=this.value+' dB'"/>
+            <div style="font-size:.69rem;color:var(--muted);margin-top:4px">Threshold: <span id="gate-v">-40 dB</span></div>
+          </div>
+        </div>
+
+        <div class="sfeat">
+          <div class="twrap">
+            <div class="tinfo"><div class="tnm">🗜️ Compressor</div><div class="tdesc">Even out loud/quiet differences</div></div>
+            <label class="tsw"><input type="checkbox" id="tog-comp"/><span class="trk"></span></label>
+          </div>
+          <div style="margin-top:10px">
+            <input type="range" class="slider" id="sl-ratio" min="1" max="20" value="4" oninput="document.getElementById('ratio-v').textContent=this.value+':1'"/>
+            <div style="font-size:.69rem;color:var(--muted);margin-top:4px">Ratio: <span id="ratio-v">4:1</span></div>
+          </div>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">📡 Stereo Width</div><div class="sfvl" id="stereo-v">0%</div></div>
+          <input type="range" class="slider" min="0" max="100" value="0" oninput="sv('stereo','%',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="twrap">
+            <div class="tinfo"><div class="tnm">🎶 Chorus Effect</div><div class="tdesc">Thickens voice with pitch modulation</div></div>
+            <label class="tsw"><input type="checkbox" id="tog-chorus"/><span class="trk"></span></label>
+          </div>
+          <div style="margin-top:10px">
+            <input type="range" class="slider" min="0" max="100" value="30" oninput="document.getElementById('chd-v').textContent=this.value+'%'"/>
+            <div style="font-size:.69rem;color:var(--muted);margin-top:4px">Depth: <span id="chd-v">30%</span></div>
+          </div>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🎙️ Low-Pass Filter</div><div class="sfvl" id="lpf-v">20000 Hz</div></div>
+          <input type="range" class="slider" min="500" max="20000" value="20000" oninput="sv('lpf',' Hz',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">🔧 High-Pass Filter</div><div class="sfvl" id="hpf-v">0 Hz</div></div>
+          <input type="range" class="slider" min="0" max="2000" value="0" oninput="sv('hpf',' Hz',this.value)"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="sfhd"><div class="sfnm">⏩ Playback Speed</div><div class="sfvl" id="speed-v">1.00x</div></div>
+          <input type="range" class="slider" min="0.5" max="2.0" step="0.05" value="1.0" oninput="document.getElementById('speed-v').textContent=parseFloat(this.value).toFixed(2)+'x'"/>
+        </div>
+
+        <div class="sfeat">
+          <div class="twrap">
+            <div class="tinfo"><div class="tnm">🤖 Robot Voice</div><div class="tdesc">Digital vocoder effect</div></div>
+            <label class="tsw"><input type="checkbox" id="tog-robot"/><span class="trk"></span></label>
+          </div>
+          <div style="margin-top:10px">
+            <input type="range" class="slider" min="0" max="100" value="50" oninput="document.getElementById('robo-v').textContent=this.value+'%'"/>
+            <div style="font-size:.69rem;color:var(--muted);margin-top:4px">Intensity: <span id="robo-v">50%</span></div>
+          </div>
+        </div>
+
+      </div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="pill pill-o" style="font-size:.72rem" onclick="resetSound()">↺ RESET ALL</button>
+      </div>
+    </div>
+
+
+    <!-- SOUNDPAD -->
+    <div class="sec">
+      <div class="slbl" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="display:flex;align-items:center;gap:8px">&#127897; Sound Pad <span class="badge badge-g">CUSTOM SOUNDS</span></span>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:.68rem;color:var(--muted);font-weight:700;letter-spacing:1px;text-transform:uppercase">PAD VOL</span>
+            <input type="range" class="slider" id="pad-master-vol" min="0" max="200" value="100" style="width:80px" oninput="document.getElementById('pad-vol-v').textContent=this.value+'%';updatePadMasterVol(this.value)"/>
+            <span style="font-size:.72rem;color:var(--red);font-weight:800;min-width:36px" id="pad-vol-v">100%</span>
+          </div>
+          <button class="pill pill-o" style="font-size:.68rem;padding:4px 10px" onclick="stopAllPadSounds()">&#9209; STOP ALL</button>
+        </div>
+      </div>
+      <div style="font-size:.72rem;color:rgba(255,255,255,.25);margin-bottom:14px;line-height:1.5">
+        Upload any audio file (MP3, WAV, OGG, FLAC). Press buttons or keys 1-9 to fire sounds instantly.
+      </div>
+      <div class="spad-grid" id="spad-grid">
+        <div class="spad-add" onclick="triggerPadUpload()" id="spad-add-btn">
+          <div style="font-size:1.6rem;opacity:.6">&#10133;</div>
+          <div style="font-size:.7rem;font-weight:800;color:var(--muted);letter-spacing:1px;text-transform:uppercase">Add Sound</div>
+          <div style="font-size:.62rem;color:rgba(255,255,255,.2);margin-top:2px">MP3 - WAV - OGG - FLAC</div>
+        </div>
+      </div>
+      <input type="file" id="pad-file-inp" accept="audio/*" multiple style="display:none" onchange="onPadFilesSelected(this.files)"/>
+    </div>
+    <!-- STATUS -->
+    <div class="sec" id="stat-sec" style="display:none">
+      <div class="slbl">📡 Amplifier Status</div>
+      <div id="stat-list"></div>
+      <div class="pbar"><div class="pfill" id="pfill"></div></div>
+      <div id="stat-sum" style="margin-top:12px;font-size:.85rem;line-height:1.5"></div>
+    </div>
+
+    <!-- DISCORD POLICY & VOICE CONSENT GATE -->
+    <div style="background:rgba(0,0,0,.45);border:1px solid rgba(255,26,46,.28);border-radius:14px;padding:14px 16px;margin-bottom:14px;transition:all .3s" id="voice-consent-box">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <input type="checkbox" id="voice-consent-chk" style="width:18px;height:18px;accent-color:var(--red);margin-top:2px;cursor:pointer"/>
+        <label for="voice-consent-chk" style="flex:1;cursor:pointer;user-select:none">
+          <div style="font-size:.82rem;font-weight:800;color:#fff;display:flex;align-items:center;gap:6px">
+            <span>🛡️ Voice Consent & Discord Policy Compliance</span>
+            <span class="badge badge-g" style="font-size:.62rem">REQUIRED</span>
+          </div>
+          <div style="font-size:.74rem;color:var(--muted);margin-top:3px;line-height:1.4">
+            I confirm all participants in this voice channel are aware and have consented to audio amplification/relay in compliance with Discord Developer Policy and Community Guidelines.
+          </div>
+        </label>
+        <button class="pill pill-o" style="font-size:.65rem;padding:3px 8px;flex-shrink:0" onclick="openSecurityModal()">POLICY ℹ️</button>
+      </div>
+    </div>
+
+    <button class="bbtn bbtn-r" id="amp-btn" onclick="startAmp()">⚡ AMPLIFY NOW</button>
+    <button class="bbtn bbtn-d" id="stop-btn" onclick="stopAmp()" style="display:none">⏹ DISCONNECT ALL</button>
+  </div>
+</div>
+
+<!-- DISCORD SECURITY & GUIDELINES MODAL -->
+<div id="security-modal" class="modal-backdrop" style="display:none">
+  <div class="modal-box" style="max-width:620px">
+    <div class="modal-hdr">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="modal-icon" style="background:linear-gradient(135deg,#4a9eff,#0052cc);box-shadow:0 0 25px rgba(74,158,255,.35)">🛡️</div>
+        <div>
+          <div class="modal-title">DISCORD <span>SECURITY</span> & GUIDELINES</div>
+          <div class="modal-sub">Developer Policies, Voice Privacy & Compliance Rules</div>
+        </div>
+      </div>
+      <button class="ibtn" onclick="closeSecurityModal()" style="width:34px;height:34px">✕</button>
+    </div>
+
+    <!-- Intro Card -->
+    <div style="background:rgba(74,158,255,.08);border:1px solid rgba(74,158,255,.3);border-radius:12px;padding:12px 16px;margin-bottom:14px;font-size:.82rem;line-height:1.5">
+      D4Hz operates in alignment with Discord Developer Policies and safety standards. Please review these 5 mandatory principles:
+    </div>
+
+    <!-- 5 Policy Cards -->
+    <div style="display:flex;flex-direction:column;gap:10px;max-height:380px;overflow-y:auto;margin-bottom:16px;padding-right:4px">
+      <!-- 1. Bot Accounts -->
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,26,46,.25);border-radius:12px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.86rem;color:#fff">
+          <span style="font-size:1.1rem">🤖</span> 1. Official Discord Bots vs. User Tokens
+        </div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.45">
+          <strong>Discord Terms of Service (Section 5)</strong> prohibits automating user accounts ("self-bots"). For 100% compliant and ban-free voice amplification, create an official Bot Application in the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener" style="color:var(--blue);font-weight:700">Discord Developer Portal</a> and use <strong>Bot Mode</strong>.
+        </div>
+      </div>
+
+      <!-- 2. Voice Audio Privacy -->
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(0,230,118,.25);border-radius:12px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.86rem;color:#fff">
+          <span style="font-size:1.1rem">🎙️</span> 2. Audio Privacy & Affirmative Consent
+        </div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.45">
+          Under Discord Developer Policy and wiretapping laws, you <strong>must obtain consent</strong> from all speakers in a voice channel before capturing, repeating, or broadcasting audio. Unconsented voice relay violates Discord Community Guidelines on Harassment.
+        </div>
+      </div>
+
+      <!-- 3. Token Protection -->
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,170,0,.25);border-radius:12px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.86rem;color:#fff">
+          <span style="font-size:1.1rem">🔒</span> 3. Zero Credential Exfiltration
+        </div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.45">
+          Tokens are stored exclusively in your browser's local storage and sent only to your local machine (`127.0.0.1:7432`). They are never transmitted to external cloud servers. Tokens are masked in the UI to prevent shoulder-surfing.
+        </div>
+      </div>
+
+      <!-- 4. Rate Limiting & Gateway Compliance -->
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(74,158,255,.25);border-radius:12px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.86rem;color:#fff">
+          <span style="font-size:1.1rem">⚡</span> 4. Rate Limiting & Gateway Compliance
+        </div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.45">
+          The engine honors Discord API rate limit responses (`429`), handles `retry_after` backoff intervals, and maintains exact WebSocket heartbeat timing (Op 1 & Op 3) to prevent connection blacklisting.
+        </div>
+      </div>
+
+      <!-- 5. Community Safety -->
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,26,46,.25);border-radius:12px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.86rem;color:#fff">
+          <span style="font-size:1.1rem">🛡️</span> 5. Community Safety & Anti-Raiding
+        </div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.45">
+          Using multi-account voice tools for channel disruption, ear-rape mic spam, or server raiding is strictly prohibited by Discord Community Guidelines. Keep voice audio clean and respectful.
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex;gap:10px">
+      <button class="bbtn bbtn-r" style="margin-bottom:0;flex:1" onclick="closeSecurityModal()">
+        ✓ I UNDERSTAND & AGREE TO DISCORD GUIDELINES
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const S={mode:'accounts',accounts:JSON.parse(localStorage.getItem('cb_acc')||'[]'),bots:JSON.parse(localStorage.getItem('cb_bots')||'[]'),guilds:[],server:null,active:false,audioCtx:null,nodes:{}};
+function goTo(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0,0);
+  if(id==='pg-vc'){
+    populateMicDevices();
+    initMicSystem(false);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+//  DISCORD PROFILE ACTIVITY & RICH PRESENCE (DEATH.gif)
+// ══════════════════════════════════════════════════════════
+const D4HZ_DISCORD_ACTIVITY = {
+  enabled: true,
+  name: 'D4Hz',
+  type: 0,
+  application_id: '383226320970055681',
+  details: 'D4Hz WEB — High Frequency Audio',
+  state: 'Voice Amplifier Active ⚡',
+  imageUrl: 'https://files.catbox.moe/fi131s.gif', // DEATH.gif
+  largeText: 'D4Hz — DEATH',
+  smallImageUrl: 'https://files.catbox.moe/fi131s.gif',
+  smallText: 'D4Hz WEB',
+  startTime: null,
+  timerInterval: null
+};
+const CRUZE_DISCORD_ACTIVITY = D4HZ_DISCORD_ACTIVITY; // Backwards-compatible alias
+
+function getD4HzPresenceActivity(customOptions = {}) {
+  if (!D4HZ_DISCORD_ACTIVITY.enabled) return [];
+  const start = D4HZ_DISCORD_ACTIVITY.startTime || Date.now();
+  const details = customOptions.details || D4HZ_DISCORD_ACTIVITY.details;
+  const state = customOptions.state || D4HZ_DISCORD_ACTIVITY.state;
+  const imageUrl = customOptions.imageUrl || D4HZ_DISCORD_ACTIVITY.imageUrl;
+
+  return [
+    {
+      name: D4HZ_DISCORD_ACTIVITY.name,
+      type: D4HZ_DISCORD_ACTIVITY.type,
+      application_id: D4HZ_DISCORD_ACTIVITY.application_id,
+      details: details,
+      state: state,
+      timestamps: {
+        start: start
+      },
+      assets: {
+        large_image: imageUrl,
+        large_text: D4HZ_DISCORD_ACTIVITY.largeText,
+        small_image: D4HZ_DISCORD_ACTIVITY.smallImageUrl,
+        small_text: D4HZ_DISCORD_ACTIVITY.smallText
+      },
+      buttons: [
+        { label: 'D4Hz', url: 'https://github.com' }
+      ]
+    }
+  ];
+}
+const getCruzePresenceActivity = getD4HzPresenceActivity;
+
+function toggleDiscordActivity(val) {
+  D4HZ_DISCORD_ACTIVITY.enabled = !!val;
+  if (!D4HZ_DISCORD_ACTIVITY.enabled) {
+    stopActivityTimer();
+    toast('Discord Profile Activity disabled', '⏸️');
+  } else {
+    renderActivityPreview();
+    toast('Discord Profile Activity enabled with DEATH.gif!', '🎮');
+  }
+  if (S.gateways && S.gateways.length) {
+    S.gateways.forEach(gw => {
+      if (gw && gw.updatePresence) gw.updatePresence();
+    });
+  }
+}
+
+function updateDiscordProfileActivity(stateText, detailsText, startTimer = true) {
+  if (stateText) D4HZ_DISCORD_ACTIVITY.state = stateText;
+  if (detailsText) D4HZ_DISCORD_ACTIVITY.details = detailsText;
+  if (startTimer && !D4HZ_DISCORD_ACTIVITY.startTime) {
+    D4HZ_DISCORD_ACTIVITY.startTime = Date.now();
+    startActivityTimer();
+  } else if (!startTimer) {
+    D4HZ_DISCORD_ACTIVITY.startTime = null;
+    stopActivityTimer();
+  }
+
+  renderActivityPreview();
+
+  if (S.gateways && S.gateways.length) {
+    S.gateways.forEach(gw => {
+      if (gw && gw.updatePresence) gw.updatePresence();
+    });
+  }
+
+  try {
+    fetch('http://127.0.0.1:7432/update-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        details: D4HZ_DISCORD_ACTIVITY.details,
+        state: D4HZ_DISCORD_ACTIVITY.state,
+        imageUrl: D4HZ_DISCORD_ACTIVITY.imageUrl
+      })
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+function syncDiscordActivityNow() {
+  const dInp = document.getElementById('d-act-details-inp');
+  const sInp = document.getElementById('d-act-state-inp');
+  if (dInp) D4HZ_DISCORD_ACTIVITY.details = dInp.value.trim() || 'D4Hz WEB — High Frequency Audio';
+  if (sInp) D4HZ_DISCORD_ACTIVITY.state = sInp.value.trim() || 'Voice Amplifier Active ⚡';
+  if (!D4HZ_DISCORD_ACTIVITY.startTime) D4HZ_DISCORD_ACTIVITY.startTime = Date.now();
+  startActivityTimer();
+  updateDiscordProfileActivity(D4HZ_DISCORD_ACTIVITY.state, D4HZ_DISCORD_ACTIVITY.details, true);
+  toast('Discord Profile Activity updated with DEATH.gif!', '⚡');
+}
+
+function launchDesktopRpc() {
+  toast('Connecting to Discord Desktop client (DEATH.gif)...', '🚀');
+  fetch('http://127.0.0.1:7432/update-activity', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      details: D4HZ_DISCORD_ACTIVITY.details,
+      state: D4HZ_DISCORD_ACTIVITY.state,
+      imageUrl: D4HZ_DISCORD_ACTIVITY.imageUrl
+    })
+  }).then(r => r.json()).then(() => {
+    toast('Discord Desktop Rich Presence updated with DEATH.gif!', '🎮');
+  }).catch(() => {
+    toast('Relay offline. You can also run discord_presence.ps1 in PowerShell!', 'ℹ️');
+  });
+}
+
+function startActivityTimer() {
+  if (D4HZ_DISCORD_ACTIVITY.timerInterval) clearInterval(D4HZ_DISCORD_ACTIVITY.timerInterval);
+  D4HZ_DISCORD_ACTIVITY.timerInterval = setInterval(() => {
+    const el = document.getElementById('d-act-timer');
+    if (!el || !D4HZ_DISCORD_ACTIVITY.startTime) return;
+    const diff = Math.floor((Date.now() - D4HZ_DISCORD_ACTIVITY.startTime) / 1000);
+    const m = String(Math.floor(diff / 60)).padStart(2, '0');
+    const s = String(diff % 60).padStart(2, '0');
+    el.textContent = `${m}:${s} elapsed`;
+  }, 1000);
+}
+
+function stopActivityTimer() {
+  if (D4HZ_DISCORD_ACTIVITY.timerInterval) {
+    clearInterval(D4HZ_DISCORD_ACTIVITY.timerInterval);
+    D4HZ_DISCORD_ACTIVITY.timerInterval = null;
+  }
+  const el = document.getElementById('d-act-timer');
+  if (el) el.textContent = '00:00 elapsed';
+}
+
+function renderActivityPreview() {
+  const stEl = document.getElementById('d-act-state-preview');
+  const dtEl = document.getElementById('d-act-details-preview');
+  const imgEl = document.getElementById('d-act-img-preview');
+  if (stEl) stEl.textContent = D4HZ_DISCORD_ACTIVITY.state;
+  if (dtEl) dtEl.textContent = D4HZ_DISCORD_ACTIVITY.details;
+  if (imgEl && imgEl.src !== D4HZ_DISCORD_ACTIVITY.imageUrl) {
+    imgEl.src = D4HZ_DISCORD_ACTIVITY.imageUrl;
+  }
+}
+
+// PARTICLES
+(()=>{const c=document.getElementById('bgc'),x=c.getContext('2d');let P=[];
+const resize=()=>{c.width=innerWidth;c.height=innerHeight;P=[];const n=Math.floor(c.width*c.height/7500);for(let i=0;i<n;i++)P.push({x:Math.random()*c.width,y:Math.random()*c.height,r:Math.random()*1.4+.3,vx:(Math.random()-.5)*.12,vy:(Math.random()-.5)*.12,a:Math.random()*.65+.2,red:Math.random()<.2})};
+const draw=()=>{x.clearRect(0,0,c.width,c.height);P.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=c.width;if(p.x>c.width)p.x=0;if(p.y<0)p.y=c.height;if(p.y>c.height)p.y=0;x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=p.red?`rgba(255,26,46,${p.a})`:`rgba(255,255,255,${p.a*.35})`;x.fill()});requestAnimationFrame(draw)};
+window.addEventListener('resize',resize);resize();draw()})();
+
+let TT;
+function toast(m,i='✅'){const t=document.getElementById('toast');t.innerHTML=`<span>${i}</span> ${m}`;t.style.display='flex';clearTimeout(TT);TT=setTimeout(()=>t.style.display='none',3500)}
+
+async function apiGet(path,token,isBot=false){const r=await fetch(`https://discord.com/api/v10${path}`,{headers:{'Authorization':isBot?`Bot ${token}`:token}});if(!r.ok)throw new Error(r.status);return r.json()}
+function avUrl(u){return u.avatar?`https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64`:null}
+function icUrl(g){return g.icon?`https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png?size=64`:null}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function ini(s){return s.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?'}
+const dl=ms=>new Promise(r=>setTimeout(r,ms));
+const saveA=()=>localStorage.setItem('cb_acc',JSON.stringify(S.accounts));
+const saveB=()=>localStorage.setItem('cb_bots',JSON.stringify(S.bots));
+
+async function addAcc(){
+  const inp=document.getElementById('acc-inp'),btn=document.getElementById('acc-add-btn'),tk=inp.value.trim();
+  if(!tk){toast('Enter a token','⚠️');return}
+  if(S.accounts.find(a=>a.token===tk)){toast('Already added','⚠️');return}
+  btn.textContent='⏳';btn.disabled=true;
+  try{const u=await apiGet('/users/@me',tk);S.accounts.push({id:u.id,username:u.username,discriminator:u.discriminator||'0',avatar:avUrl(u),token:tk,isBot:false});saveA();inp.value='';renderAccs();toast(`Added ${u.username}!`)}
+  catch(e){toast('Invalid token or network error','❌')}
+  finally{btn.textContent='+ ADD';btn.disabled=false}
+}
+async function addBot(){
+  const inp=document.getElementById('bot-inp'),btn=document.getElementById('bot-add-btn'),tk=inp.value.trim();
+  if(!tk){toast('Enter a bot token','⚠️');return}
+  if(S.bots.find(b=>b.token===tk)){toast('Already added','⚠️');return}
+  btn.textContent='⏳';btn.disabled=true;
+  try{const u=await apiGet('/users/@me',tk,true);S.bots.push({id:u.id,username:u.username,avatar:avUrl(u),token:tk,isBot:true});saveB();inp.value='';renderBots();toast(`Added bot ${u.username}!`,'🤖')}
+  catch(e){toast('Invalid token or network error','❌')}
+  finally{btn.textContent='+ ADD';btn.disabled=false}
+}
+function removeAcc(i){S.accounts.splice(i,1);saveA();renderAccs();toast('Removed','🗑️')}
+function removeBot(i){S.bots.splice(i,1);saveB();renderBots();toast('Removed','🗑️')}
+
+function renderAccs(){
+  const l=document.getElementById('accs-list');
+  document.getElementById('acc-count').textContent=S.accounts.length;
+  document.getElementById('acc-proc-btn').disabled=S.accounts.length===0;
+  if(!S.accounts.length){l.innerHTML='<div class="empty"><div class="eico">👤</div><p>No accounts yet.<br>Paste a user token above.</p></div>';return}
+  l.innerHTML=S.accounts.map((a,i)=>{
+    const uname=a.username||'Unknown';
+    const maskedTk = (a.token && a.token.length > 8) ? `${esc(a.token.slice(0,6))}••••••••••••` : '••••••••••••';
+    return `<div class="aitem"><div class="ava">${a.avatar?`<img src="${a.avatar}" onerror="this.style.display='none'"/>`:''}${uname[0].toUpperCase()}</div><div class="ainfo"><div class="aname">${esc(uname)}</div><div class="atag">#${a.discriminator} • <code style="font-size:.68rem;color:rgba(255,255,255,.45);letter-spacing:1px">${maskedTk}</code></div><div class="ast"><div class="dot don"></div><span style="color:var(--muted)">Ready</span></div></div><span class="badge">USER</span><div class="aacts"><button class="ibtn" onclick="removeAcc(${i})" title="Remove account">🗑</button></div></div>`;
+  }).join('');
+}
+function renderBots(){
+  const l=document.getElementById('bots-list');
+  document.getElementById('bot-count').textContent=S.bots.length;
+  document.getElementById('bot-proc-btn').disabled=S.bots.length===0;
+  if(!S.bots.length){l.innerHTML='<div class="empty"><div class="eico">🤖</div><p>No bots yet.<br>Paste a bot token above.</p></div>';return}
+  l.innerHTML=S.bots.map((b,i)=>{
+    const bname=b.username||'Bot';
+    const maskedTk = (b.token && b.token.length > 8) ? `${esc(b.token.slice(0,6))}••••••••••••` : '••••••••••••';
+    return `<div class="aitem"><div class="ava"><span>🤖</span>${b.avatar?`<img src="${b.avatar}" onerror="this.style.display='none'"/>`:''}</div><div class="ainfo"><div class="aname">${esc(b.username)}</div><div style="font-size:.72rem;color:var(--muted)">Bot • <code style="font-size:.68rem;color:rgba(255,255,255,.45);letter-spacing:1px">${maskedTk}</code></div><div class="ast"><div class="dot don"></div><span style="color:var(--muted)">Ready</span></div></div><span class="badge">BOT</span><div class="aacts"><button class="ibtn" onclick="removeBot(${i})" title="Remove bot">🗑</button></div></div>`;
+  }).join('');
+}
+
+async function procSrv(mode){
+  S.mode=mode;const items=mode==='accounts'?S.accounts:S.bots;
+  document.getElementById('srv-bc').textContent=mode==='accounts'?'Accounts':'Bots';
+  document.getElementById('vc-bc1').textContent=mode==='accounts'?'Accounts':'Bots';
+  document.getElementById('srv-sub').textContent=`${items.length} ${mode==='accounts'?'account':'bot'}${items.length>1?'s':''} loaded`;
+  const jb=document.getElementById('join-sec-badge');
+  if(jb)jb.textContent=mode==='accounts'?'USER ACCOUNTS':'BOTS';
+  goTo('pg-servers');
+  document.getElementById('srv-grid').innerHTML='<div class="empty" style="grid-column:1/-1"><div class="spin" style="margin:0 auto 12px"></div><p>Fetching servers…</p></div>';
+  const gmap={};
+  await Promise.all(items.map(async item=>{try{const gs=await apiGet('/users/@me/guilds?limit=200',item.token,item.isBot);gs.forEach(g=>{if(!gmap[g.id])gmap[g.id]={...g,cnt:0};gmap[g.id].cnt++})}catch(e){}}));
+  S.guilds=Object.values(gmap);
+  renderServerGrid();
+}
+
+function renderServerGrid(){
+  const gCountEl=document.getElementById('srv-count');
+  if(gCountEl)gCountEl.textContent=S.guilds.length;
+  if(!S.guilds.length){
+    document.getElementById('srv-grid').innerHTML='<div class="empty" style="grid-column:1/-1"><div class="eico">🔍</div><p>No servers found.<br>Make sure your accounts are in a Discord server or check your tokens.</p></div>';
+    return;
+  }
+  document.getElementById('srv-grid').innerHTML=S.guilds.map((g,idx)=>{
+    const ic=icUrl(g);
+    const i2=ini(g.name);
+    return `<div class="scard" onclick="selSrv(${idx})">
+      <div class="sico">${ic?`<img src="${ic}" onerror="this.outerHTML='<span>${i2}</span>'"/>`:i2}</div>
+      <div class="sname">${esc(g.name)}</div>
+      ${g.cnt>1?`<span class="badge">${g.cnt} accts</span>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function refreshServers(){
+  const btn=document.getElementById('srv-ref-btn');
+  if(btn){btn.textContent='⏳ REFRESHING…';btn.disabled=true;}
+  await procSrv(S.mode||'accounts');
+  if(btn){btn.textContent='🔄 REFRESH LIST';btn.disabled=false;}
+}
+
+function selSrv(idx){
+  const g=S.guilds[idx];
+  if(!g)return;
+  selSrvDirect(g);
+}
+
+function selSrvDirect(g){
+  if(!g)return;
+  S.server=g;
+  const vcSrv=document.getElementById('vc-srv');
+  if(vcSrv)vcSrv.textContent=`Server: ${g.name}`;
+  goTo('pg-vc');
+  toast(`Selected ${g.name}`,'🎯');
+}
+
+// ══════════════════════════════════════════════
+//  DISCORD SECURITY & GUIDELINES MODAL CONTROLLER
+// ══════════════════════════════════════════════
+function openSecurityModal(){
+  const m=document.getElementById('security-modal');
+  if(m)m.style.display='flex';
+}
+
+function closeSecurityModal(){
+  const m=document.getElementById('security-modal');
+  if(m)m.style.display='none';
+}
+
+// ══════════════════════════════════════════════════════════
+//  LIVE MICROPHONE SYSTEM & DISCORD BROADCAST PIPELINE
+// ══════════════════════════════════════════════════════════
+const MIC = {
+  stream: null,
+  sourceNode: null,
+  gainNode: null,
+  analyserNode: null,
+  monitorGainNode: null,
+  destNode: null,
+  mediaRecorder: null,
+  ws: null,
+  isMuted: false,
+  isMonitoring: false,
+  transmitMode: 'open', // 'open' or 'ptt'
+  isPttActive: false,
+  deviceId: 'default',
+  animFrameId: null,
+  gainMultiplier: 1.0,
+  activeBroadcasting: false
+};
+
+// 1. Enumerate & populate audio input devices
+async function populateMicDevices() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === 'audioinput');
+    const sel = document.getElementById('mic-device-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="default">Default System Microphone</option>';
+    audioInputs.forEach((d, idx) => {
+      if (d.deviceId !== 'default') {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Microphone ${idx + 1}`;
+        sel.appendChild(opt);
+      }
+    });
+    if (MIC.deviceId && MIC.deviceId !== 'default') {
+      sel.value = MIC.deviceId;
+    }
+  } catch (e) {
+    console.log('Device enumeration error:', e.message);
+  }
+}
+
+// 2. Initialize or re-acquire microphone stream
+async function initMicSystem(requestPermission = false) {
+  try {
+    if (MIC.stream) {
+      MIC.stream.getTracks().forEach(t => t.stop());
+      MIC.stream = null;
+    }
+
+    const ec = document.getElementById('tog-mic-ec') ? document.getElementById('tog-mic-ec').checked : true;
+    const ns = document.getElementById('tog-mic-ns') ? document.getElementById('tog-mic-ns').checked : true;
+
+    const constraints = {
+      audio: {
+        deviceId: MIC.deviceId !== 'default' ? { exact: MIC.deviceId } : undefined,
+        echoCancellation: ec,
+        noiseSuppression: ns,
+        autoGainControl: false,
+        sampleRate: 48000,
+        channelCount: 2
+      }
+    };
+
+    MIC.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    console.log('[MIC] Microphone stream acquired successfully');
+    await populateMicDevices();
+    setupAudioNodesWithMic();
+    startVuMeterVisualizer();
+    updateMicUiStatus();
+    return true;
+  } catch (err) {
+    console.error('[MIC] Failed to acquire microphone:', err.message);
+    if (requestPermission) {
+      toast('Microphone permission needed: ' + err.message, '⚠️');
+    }
+    return false;
+  }
+}
+
+async function onMicDeviceChanged(devId) {
+  MIC.deviceId = devId;
+  await initMicSystem(true);
+  if (S.active) {
+    restartMicRecorder();
+  }
+  toast('Switched microphone device', '🎙️');
+}
+
+function updateMicConstraints() {
+  if (MIC.stream) {
+    initMicSystem(false);
+  }
+}
+
+function setMicGain(val) {
+  MIC.gainMultiplier = parseFloat(val) / 100;
+  const el = document.getElementById('mic-gain-v');
+  if (el) el.textContent = val + '%';
+  if (MIC.gainNode) {
+    MIC.gainNode.gain.value = MIC.gainMultiplier;
+  }
+}
+
+function setMicTransmitMode(mode) {
+  MIC.transmitMode = mode;
+  const btnOpen = document.getElementById('btn-mode-open');
+  const btnPtt = document.getElementById('btn-mode-ptt');
+  const pttContainer = document.getElementById('ptt-hold-container');
+
+  if (mode === 'open') {
+    if (btnOpen) { btnOpen.className = 'pill pill-s'; }
+    if (btnPtt) { btnPtt.className = 'pill pill-o'; }
+    if (pttContainer) pttContainer.style.display = 'none';
+    sendSpeakingState(true);
+  } else {
+    if (btnOpen) { btnOpen.className = 'pill pill-o'; }
+    if (btnPtt) { btnPtt.className = 'pill pill-s'; }
+    if (pttContainer) pttContainer.style.display = 'block';
+    sendSpeakingState(false);
+  }
+  updateMicUiStatus();
+  toast(mode === 'open' ? 'Open Mic Mode Active' : 'Push-To-Talk Mode Active (Hold Space)', '🎙️');
+}
+
+function toggleMicMute() {
+  MIC.isMuted = !MIC.isMuted;
+  if (MIC.stream) {
+    MIC.stream.getAudioTracks().forEach(t => t.enabled = !MIC.isMuted);
+  }
+  updateMicUiStatus();
+  sendSpeakingState(!MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive));
+  toast(MIC.isMuted ? 'Microphone Muted' : 'Microphone Unmuted', MIC.isMuted ? '🔇' : '🎙️');
+}
+
+function toggleMicMonitor() {
+  initAudio();
+  MIC.isMonitoring = !MIC.isMonitoring;
+  const btn = document.getElementById('mic-test-btn');
+  if (MIC.monitorGainNode) {
+    MIC.monitorGainNode.gain.value = MIC.isMonitoring ? 0.9 : 0;
+  }
+  if (btn) {
+    btn.className = MIC.isMonitoring ? 'pill pill-s' : 'pill pill-o';
+    btn.innerHTML = MIC.isMonitoring ? '🎧 MONITOR: ON' : '🎧 MONITOR (HEAR SELF)';
+  }
+  toast(MIC.isMonitoring ? 'Hear-Self Monitor Enabled' : 'Hear-Self Monitor Disabled', '🎧');
+}
+
+function startPttSpeaking() {
+  if (MIC.transmitMode !== 'ptt' || MIC.isMuted) return;
+  MIC.isPttActive = true;
+  const btn = document.getElementById('ptt-hold-btn');
+  if (btn) {
+    btn.style.boxShadow = '0 0 30px var(--red-glow), 0 0 60px rgba(255,26,46,.4)';
+    btn.textContent = '🔴 TALKING LIVE...';
+  }
+  sendSpeakingState(true);
+  updateMicUiStatus();
+}
+
+function stopPttSpeaking() {
+  if (MIC.transmitMode !== 'ptt') return;
+  MIC.isPttActive = false;
+  const btn = document.getElementById('ptt-hold-btn');
+  if (btn) {
+    btn.style.boxShadow = '';
+    btn.textContent = '📢 HOLD TO TALK (SPACEBAR)';
+  }
+  sendSpeakingState(false);
+  updateMicUiStatus();
+}
+
+// Global keybinds: Space for PTT (when not typing in an input), M for Mute
+window.addEventListener('keydown', (e) => {
+  if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.code === 'KeyM') {
+    e.preventDefault();
+    toggleMicMute();
+  } else if (e.code === 'Space' && MIC.transmitMode === 'ptt' && !e.repeat) {
+    e.preventDefault();
+    startPttSpeaking();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.code === 'Space' && MIC.transmitMode === 'ptt') {
+    e.preventDefault();
+    stopPttSpeaking();
+  }
+});
+
+function updateMicUiStatus() {
+  const led = document.getElementById('mic-status-led');
+  const txt = document.getElementById('mic-status-text');
+  const liveBadge = document.getElementById('mic-live-badge');
+  const muteBadge = document.getElementById('mic-mute-badge');
+  const muteBtn = document.getElementById('mic-mute-btn');
+
+  if (muteBadge) muteBadge.style.display = MIC.isMuted ? 'inline-flex' : 'none';
+  if (liveBadge) liveBadge.style.display = (S.active && !MIC.isMuted) ? 'inline-flex' : 'none';
+
+  if (muteBtn) {
+    muteBtn.className = MIC.isMuted ? 'pill pill-o' : 'pill pill-s';
+    muteBtn.innerHTML = MIC.isMuted ? '🔇 UNMUTE [M]' : '🎙️ MUTE [M]';
+  }
+
+  if (MIC.isMuted) {
+    if (led) { led.style.background = 'var(--red)'; led.style.boxShadow = '0 0 8px var(--red)'; }
+    if (txt) { txt.textContent = 'MICROPHONE MUTED'; txt.style.color = 'var(--red)'; }
+  } else if (S.active && (MIC.transmitMode === 'open' || MIC.isPttActive)) {
+    if (led) { led.style.background = 'var(--success)'; led.style.boxShadow = '0 0 10px var(--success)'; }
+    if (txt) { txt.textContent = 'LIVE BROADCASTING TO DISCORD VC'; txt.style.color = 'var(--success)'; }
+  } else {
+    if (led) { led.style.background = '#4a9eff'; led.style.boxShadow = '0 0 8px #4a9eff'; }
+    if (txt) { txt.textContent = MIC.transmitMode === 'ptt' ? 'PTT READY — HOLD SPACEBAR' : 'MICROPHONE READY'; txt.style.color = 'var(--text)'; }
+  }
+}
+
+// 3. Audio graph integration: Mic -> Effects -> Destination + Monitor
+function setupAudioNodesWithMic() {
+  if (!S.audioCtx) initAudio();
+  if (!MIC.stream) return;
+
+  try {
+    if (MIC.sourceNode) {
+      try { MIC.sourceNode.disconnect(); } catch (e) {}
+    }
+
+    const ctx = S.audioCtx;
+    const n = S.nodes;
+
+    MIC.sourceNode = ctx.createMediaStreamSource(MIC.stream);
+    if (!MIC.gainNode) {
+      MIC.gainNode = ctx.createGain();
+      MIC.gainNode.gain.value = MIC.gainMultiplier;
+    }
+    if (!MIC.analyserNode) {
+      MIC.analyserNode = ctx.createAnalyser();
+      MIC.analyserNode.fftSize = 256;
+      MIC.analyserNode.smoothingTimeConstant = 0.75;
+    }
+    if (!MIC.monitorGainNode) {
+      MIC.monitorGainNode = ctx.createGain();
+      MIC.monitorGainNode.gain.value = MIC.isMonitoring ? 0.9 : 0;
+      MIC.monitorGainNode.connect(ctx.destination);
+    }
+    if (!MIC.destNode) {
+      MIC.destNode = ctx.createMediaStreamDestination();
+    }
+
+    // Connect DSP Chain:
+    // source -> gainNode -> hpf -> bass -> mid -> treble -> lpf -> wave -> comp -> pan -> gain -> analyser -> destNode & monitor
+    MIC.sourceNode.connect(MIC.gainNode);
+    MIC.gainNode.connect(n.hpf);
+
+    n.hpf.connect(n.bass);
+    n.bass.connect(n.mid);
+    n.mid.connect(n.treble);
+    n.treble.connect(n.lpf);
+    n.lpf.connect(n.wave);
+    n.wave.connect(n.comp);
+    n.comp.connect(n.pan);
+    n.pan.connect(n.gain);
+
+    // From master gain to analyser, destination for broadcast, and monitor
+    n.gain.connect(MIC.analyserNode);
+    MIC.analyserNode.connect(MIC.destNode);
+    MIC.analyserNode.connect(MIC.monitorGainNode);
+
+    console.log('[MIC] Audio DSP effects graph fully wired');
+  } catch (err) {
+    console.error('[MIC] Error wiring audio nodes:', err);
+  }
+}
+
+// 4. Live VU Meter Visualizer Canvas
+function startVuMeterVisualizer() {
+  if (MIC.animFrameId) cancelAnimationFrame(MIC.animFrameId);
+  const canvas = document.getElementById('mic-vu-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dbEl = document.getElementById('mic-level-db');
+
+  const dataArray = new Uint8Array(128);
+
+  function renderVu() {
+    MIC.animFrameId = requestAnimationFrame(renderVu);
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    let peak = 0;
+    if (MIC.analyserNode && !MIC.isMuted) {
+      MIC.analyserNode.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+        if (dataArray[i] > peak) peak = dataArray[i];
+      }
+    }
+
+    const norm = Math.min(peak / 255, 1.0);
+    const db = norm > 0.001 ? (20 * Math.log10(norm)).toFixed(1) : '-∞';
+    if (dbEl) dbEl.textContent = db + ' dB';
+
+    // Draw VU meter segments
+    const bars = 48;
+    const barWidth = (w - (bars - 1) * 3) / bars;
+    const activeBars = Math.floor(norm * bars);
+
+    for (let i = 0; i < bars; i++) {
+      const x = i * (barWidth + 3);
+      const ratio = i / bars;
+
+      if (i < activeBars) {
+        if (ratio > 0.75) ctx.fillStyle = 'var(--red)';
+        else if (ratio > 0.5) ctx.fillStyle = 'var(--warn)';
+        else ctx.fillStyle = 'var(--success)';
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      }
+
+      ctx.beginPath();
+      ctx.roundRect(x, 3, barWidth, h - 6, 2);
+      ctx.fill();
+    }
+  }
+
+  renderVu();
+}
+
+// 5. Stream Microphone to Node.js Voice Relay Backend (WebSocket + HTTP Fallback)
+function connectMicWebSocket() {
+  if (MIC.ws && (MIC.ws.readyState === 0 || MIC.ws.readyState === 1)) return;
+  try {
+    MIC.ws = new WebSocket('ws://127.0.0.1:7432/mic');
+    MIC.ws.binaryType = 'arraybuffer';
+    MIC.ws.onopen = () => {
+      console.log('[MIC] WebSocket streaming connected to backend relay');
+      sendSpeakingState(!MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive));
+    };
+    MIC.ws.onclose = () => {
+      MIC.ws = null;
+    };
+    MIC.ws.onerror = () => {
+      MIC.ws = null;
+    };
+  } catch (e) {
+    MIC.ws = null;
+  }
+}
+
+function sendSpeakingState(isSpeaking) {
+  if (MIC.ws && MIC.ws.readyState === 1) {
+    try {
+      MIC.ws.send(JSON.stringify({ speaking: isSpeaking }));
+    } catch (e) {}
+  } else {
+    fetch('http://127.0.0.1:7432/mic-speaking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ speaking: isSpeaking })
+    }).catch(() => {});
+  }
+}
+
+async function startMicStreamingToRelay() {
+  await initMicSystem(true);
+  if (!MIC.stream || !MIC.destNode) return;
+
+  connectMicWebSocket();
+
+  try {
+    if (MIC.mediaRecorder && MIC.mediaRecorder.state !== 'inactive') {
+      try { MIC.mediaRecorder.stop(); } catch (e) {}
+    }
+
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus' : '');
+
+    MIC.mediaRecorder = new MediaRecorder(MIC.destNode.stream, {
+      mimeType: mime,
+      audioBitsPerSecond: 128000
+    });
+
+    MIC.mediaRecorder.ondataavailable = async (e) => {
+      if (!e.data || e.data.size === 0) return;
+      if (MIC.isMuted) return;
+      if (MIC.transmitMode === 'ptt' && !MIC.isPttActive) return;
+
+      if (MIC.ws && MIC.ws.readyState === 1) {
+        try {
+          const buf = await e.data.arrayBuffer();
+          MIC.ws.send(buf);
+        } catch (err) {}
+      } else {
+        // Fallback to HTTP POST chunk
+        fetch('http://127.0.0.1:7432/mic-chunk', {
+          method: 'POST',
+          body: e.data
+        }).catch(() => {});
+      }
+    };
+
+    // Timeslice 100ms for continuous low-latency live audio streaming
+    MIC.mediaRecorder.start(100);
+    MIC.activeBroadcasting = true;
+    updateMicUiStatus();
+    console.log('[MIC] MediaRecorder streaming live microphone audio');
+  } catch (err) {
+    console.error('[MIC] Failed to start MediaRecorder:', err.message);
+  }
+}
+
+function stopMicStreaming() {
+  MIC.activeBroadcasting = false;
+  if (MIC.mediaRecorder && MIC.mediaRecorder.state !== 'inactive') {
+    try { MIC.mediaRecorder.stop(); } catch (e) {}
+    MIC.mediaRecorder = null;
+  }
+  if (MIC.ws) {
+    try { MIC.ws.close(); } catch (e) {}
+    MIC.ws = null;
+  }
+  sendSpeakingState(false);
+  updateMicUiStatus();
+}
+
+function restartMicRecorder() {
+  if (MIC.activeBroadcasting) {
+    stopMicStreaming();
+    setTimeout(() => startMicStreamingToRelay(), 200);
+  }
+}
+
+
+function sv(key,unit,val){
+  const el=document.getElementById(`${key}-v`);if(el)el.textContent=val+unit;
+  applyNode(key,parseFloat(val));
+}
+
+function initAudio(){
+  if(S.audioCtx)return;
+  const ctx=S.audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  const n=S.nodes;
+  n.gain=ctx.createGain();n.gain.gain.value=1;
+  n.bass=ctx.createBiquadFilter();n.bass.type='lowshelf';n.bass.frequency.value=150;n.bass.gain.value=0;
+  n.mid=ctx.createBiquadFilter();n.mid.type='peaking';n.mid.frequency.value=1000;n.mid.Q.value=1;n.mid.gain.value=0;
+  n.treble=ctx.createBiquadFilter();n.treble.type='highshelf';n.treble.frequency.value=3000;n.treble.gain.value=0;
+  n.delay=ctx.createDelay(1.0);n.delay.delayTime.value=0;
+  n.dfb=ctx.createGain();n.dfb.gain.value=0;
+  n.conv=ctx.createConvolver();
+  const sr=ctx.sampleRate,len=sr*2.5,buf=ctx.createBuffer(2,len,sr);
+  for(let ch=0;ch<2;ch++){const d=buf.getChannelData(ch);for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3)}
+  n.conv.buffer=buf;
+  n.rvbWet=ctx.createGain();n.rvbWet.gain.value=0;
+  n.rvbDry=ctx.createGain();n.rvbDry.gain.value=1;
+  n.wave=ctx.createWaveShaper();
+  const dc=new Float32Array(256);for(let i=0;i<256;i++){const x=i*2/256-1;dc[i]=x}n.wave.curve=dc;
+  n.lpf=ctx.createBiquadFilter();n.lpf.type='lowpass';n.lpf.frequency.value=20000;
+  n.hpf=ctx.createBiquadFilter();n.hpf.type='highpass';n.hpf.frequency.value=0;
+  n.comp=ctx.createDynamicsCompressor();n.comp.threshold.value=-50;n.comp.ratio.value=4;n.comp.attack.value=0;n.comp.release.value=0.25;
+  n.pan=ctx.createStereoPanner();n.pan.pan.value=0;
+  n.chorusDelay=ctx.createDelay(0.05);n.chorusDelay.delayTime.value=0.02;
+  n.chorusGain=ctx.createGain();n.chorusGain.gain.value=0;
+  n.osc=ctx.createOscillator();n.osc.frequency.value=0.25;
+  n.oscG=ctx.createGain();n.oscG.gain.value=0.003;
+  n.osc.connect(n.oscG);n.oscG.connect(n.chorusDelay.delayTime);n.osc.start();
+}
+
+function applyNode(key,val){
+  if(!S.audioCtx)return;const n=S.nodes;
+  if(key==='vol')n.gain.gain.value=val/100;
+  else if(key==='bass')n.bass.gain.value=val;
+  else if(key==='mid')n.mid.gain.value=val;
+  else if(key==='treble')n.treble.gain.value=val;
+  else if(key==='echo'){n.delay.delayTime.value=val/1000;n.dfb.gain.value=val>0?.4:0}
+  else if(key==='reverb'){n.rvbWet.gain.value=val/100;n.rvbDry.gain.value=1-(val/100)*.5}
+  else if(key==='dist'){const k=val*2,dc=new Float32Array(256);for(let i=0;i<256;i++){const x=i*2/256-1;dc[i]=k===0?x:(3+k)*x*20*Math.PI/180/(Math.PI+k*Math.abs(x))}n.wave.curve=dc}
+  else if(key==='stereo')n.pan.pan.value=(val/100)*.8;
+  else if(key==='lpf')n.lpf.frequency.value=Math.max(val,10);
+  else if(key==='hpf')n.hpf.frequency.value=Math.max(val,0);
+}
+
+function resetSound(){
+  document.querySelectorAll('#pg-vc input[type=range]').forEach(el=>{
+    el.value=el.defaultValue;el.dispatchEvent(new Event('input'));
+  });
+  document.querySelectorAll('#pg-vc input[type=checkbox]').forEach(el=>{
+    if(el.checked){el.checked=false;el.dispatchEvent(new Event('change'))}
+  });
+  toast('Sound settings reset','↺');
+}
+
+// ══════════════════════════════════════════════
+//  DISCORD GATEWAY — Real WebSocket connection
+// ══════════════════════════════════════════════
+class DiscordGateway {
+  constructor(token, isBot=false, username='') {
+    this.token=token; this.isBot=isBot; this.username=username;
+    this.ws=null; this.hbTimer=null; this.seq=null;
+    this.ready=false; this.userId=null; this.sessionId=null;
+  }
+
+  connect(){
+    return new Promise((resolve,reject)=>{
+      try{
+        this.ws=new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
+      }catch(e){reject(new Error('WS failed'));return}
+      const timeout=setTimeout(()=>reject(new Error('Timeout')),20000);
+      this.ws.onmessage=(ev)=>{
+        let msg;try{msg=JSON.parse(ev.data)}catch{return}
+        if(msg.s)this.seq=msg.s;
+        switch(msg.op){
+          case 10: // HELLO — start heartbeat then identify
+            this._startHb(msg.d.heartbeat_interval);
+            this._identify();
+            break;
+          case 11: break; // HEARTBEAT ACK
+          case 0: // DISPATCH
+            if(msg.t==='READY'){
+              clearTimeout(timeout);
+              this.userId=msg.d.user.id;
+              this.sessionId=msg.d.session_id;
+              this.ready=true;
+              resolve(this);
+            }
+            break;
+          case 9: // INVALID SESSION
+            clearTimeout(timeout);
+            reject(new Error('Invalid token / session'));
+            break;
+        }
+      };
+      this.ws.onerror=()=>{clearTimeout(timeout);reject(new Error('Connection error'))};
+      this.ws.onclose=(e)=>{clearTimeout(timeout);if(!this.ready)reject(new Error('Closed: '+e.code));this._cleanup()};
+    });
+  }
+
+  _startHb(interval){
+    // Send first heartbeat immediately, then on interval
+    this._sendHb();
+    this.hbTimer=setInterval(()=>this._sendHb(),interval);
+  }
+  _sendHb(){if(this.ws&&this.ws.readyState===1)this.ws.send(JSON.stringify({op:1,d:this.seq}))}
+
+  _identify(){
+    const d=this.isBot
+      ? {token:this.token.startsWith('Bot ')?this.token:`Bot ${this.token}`,intents:641,properties:{os:'Windows',browser:'Discord Client',device:'desktop'},presence:{status:'online',since:0,activities:[{name:'D4Hz',type:0,state:'Voice Amplifier Active ⚡'}],afk:false}}
+      : {
+          token:this.token,
+          capabilities:16381,
+          intents:0,
+          properties:{
+            os:'Windows',
+            browser:'Discord Client',
+            device:'',
+            system_locale:'en-US',
+            browser_user_agent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36',
+            browser_version:'32.2.5',
+            os_version:'10.0.19045',
+            release_channel:'stable',
+            client_build_number:375492,
+            client_event_source:null
+          },
+          presence:{status:'online',since:0,activities:getD4HzPresenceActivity(),afk:false},
+          compress:false,
+          client_state:{guild_versions:{},read_state_version:0,user_guild_settings_version:-1}
+        };
+    this.ws.send(JSON.stringify({op:2,d}));
+  }
+
+  updatePresence(customOpts){
+    if(!this.ws||this.ws.readyState!==1)return;
+    this.ws.send(JSON.stringify({
+      op:3,
+      d:{
+        since:0,
+        activities:getD4HzPresenceActivity(customOpts),
+        status:'online',
+        afk:false
+      }
+    }));
+  }
+
+  joinVC(guildId, channelId, selfMute=false, selfDeaf=true){
+    if(!this.ws||this.ws.readyState!==1)return false;
+    this.ws.send(JSON.stringify({op:4,d:{guild_id:guildId,channel_id:channelId,self_mute:selfMute,self_deaf:selfDeaf}}));
+    return true;
+  }
+
+  leaveVC(guildId){
+    if(!this.ws||this.ws.readyState!==1)return;
+    this.ws.send(JSON.stringify({op:4,d:{guild_id:guildId,channel_id:null,self_mute:false,self_deaf:false}}));
+  }
+
+  disconnect(){
+    this._cleanup();
+    if(this.ws){try{this.ws.close(1000)}catch(e){}this.ws=null;}
+  }
+
+  _cleanup(){
+    if(this.hbTimer){clearInterval(this.hbTimer);this.hbTimer=null;}
+    this.ready=false;
+  }
+}
+
+// ══════════════════════════════════════════════
+//  AMPLIFY — Real Gateway connections
+// ══════════════════════════════════════════════
+async function startAmp(){
+  const vcId=document.getElementById('vc-id').value.trim();
+  if(!vcId){toast('Enter a Voice Channel ID','⚠️');return}
+  if(!/^\d{17,20}$/.test(vcId)){toast('Invalid VC ID format','⚠️');return}
+  if(!S.server){toast('No server selected','⚠️');return}
+  const items=S.mode==='accounts'?S.accounts:S.bots;
+  if(!items.length){toast('No accounts/bots added','⚠️');return}
+
+  // ── Verify Voice Audio Consent & Discord Policy Compliance ──
+  const consentChk=document.getElementById('voice-consent-chk');
+  if(consentChk && !consentChk.checked){
+    const box=document.getElementById('voice-consent-box');
+    if(box){
+      box.style.borderColor='var(--red)';
+      box.style.boxShadow='0 0 24px rgba(255,26,46,.7)';
+      box.scrollIntoView({behavior:'smooth',block:'center'});
+      setTimeout(()=>{box.style.boxShadow='';},2500);
+    }
+    toast('Voice Consent Required: Please check the consent box to comply with Discord Policy','⚠️');
+    return;
+  }
+
+  initAudio();
+  S.active=true;
+  S.gateways=[];
+
+  const guildId=S.server.id;
+
+  // UI — show status panel
+  document.getElementById('stat-sec').style.display='block';
+  document.getElementById('amp-btn').style.display='none';
+  document.getElementById('stop-btn').style.display='flex';
+  const sl=document.getElementById('stat-list'),pf=document.getElementById('pfill');
+
+  // Show live microphone broadcast status at top
+  sl.innerHTML=`
+    <div style="background:rgba(255,26,46,.08);border:1px solid rgba(255,26,46,.25);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:.82rem;display:flex;align-items:center;gap:10px">
+      <span style="font-size:1.1rem">🎙️</span>
+      <span>Broadcast Source: <strong style="color:#fff">Your Own Microphone (Live Multi-Voice)</strong></span>
+      <span class="badge badge-g" style="margin-left:auto">OPUS 48kHz</span>
+    </div>
+  `+items.map((a,i)=>`
+    <div class="srow" id="sr-${i}">
+      <div class="spin"></div>
+      <span>${esc(a.username)}</span>
+      <span class="badge badge-b">📢 AMPLIFIER</span>
+      <span class="smsg">Connecting to Gateway…</span>
+    </div>`).join('');
+
+  let connected=0,failed=0;
+
+  // Update rows to Connecting status
+  items.forEach((item,i)=>{
+    const row=document.getElementById(`sr-${i}`);
+    if(row)row.querySelector('.smsg').textContent='Connecting to Voice Engine…';
+  });
+
+  try {
+    // Start backend voice relay session once for all accounts
+    const r = await fetch('http://127.0.0.1:7432/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accounts: items.map(a => ({ token: a.token, username: a.username, isBot: !!a.isBot })),
+        guildId, channelId: vcId
+      }),
+      signal: AbortSignal.timeout(35000)
+    });
+
+    if(r.ok){
+      const resData = await r.json();
+      const results = resData.results || [];
+      for(let i=0; i<items.length; i++){
+        const item = items[i];
+        const row = document.getElementById(`sr-${i}`);
+        const cRes = results[i] || { ok: true };
+        if(cRes.ok){
+          connected++;
+          if(row) row.innerHTML=`
+            <div class="dot don"></div>
+            <span>${esc(item.username)}</span>
+            <span class="badge badge-b">📢 AMPLIFIER</span>
+            <span class="smsg" style="color:var(--success)">✅ Active in VC — Live Mic & Soundpad Ready!</span>`;
+        } else {
+          failed++;
+          if(row) row.innerHTML=`
+            <div class="dot der"></div>
+            <span>${esc(item.username)}</span>
+            <span class="badge badge-b">📢 AMPLIFIER</span>
+            <span class="smsg" style="color:#ff6680">❌ ${esc(cRes.error||'Failed')}</span>`;
+        }
+        pf.style.width=`${((i+1)/items.length)*100}%`;
+      }
+    } else {
+      throw new Error(`Relay returned HTTP ${r.status}`);
+    }
+  } catch(relayErr) {
+    console.log('Relay connection error, falling back to direct browser gateway:', relayErr.message);
+    // Fallback: connect directly in browser if relay is unreachable
+    for(let i=0; i<items.length; i++){
+      const item = items[i];
+      const row = document.getElementById(`sr-${i}`);
+      const gw = new DiscordGateway(item.token, item.isBot, item.username);
+      try {
+        await gw.connect();
+        gw.joinVC(guildId, vcId, false, false);
+        S.gateways.push(gw);
+        connected++;
+        if(row) row.innerHTML=`
+          <div class="dot don"></div>
+          <span>${esc(item.username)}</span>
+          <span class="badge badge-b">📢 AMPLIFIER</span>
+          <span class="smsg" style="color:var(--success)">✅ Joined VC (Browser Gateway)</span>`;
+      } catch(gwErr) {
+        failed++;
+        if(row) row.innerHTML=`
+          <div class="dot der"></div>
+          <span>${esc(item.username)}</span>
+          <span class="badge badge-b">📢 AMPLIFIER</span>
+          <span class="smsg" style="color:#ff6680">❌ ${esc(gwErr.message||'Failed')}</span>`;
+      }
+      pf.style.width=`${((i+1)/items.length)*100}%`;
+      if(i<items.length-1) await dl(1800+Math.random()*800);
+    }
+  }
+
+  const sumEl=document.getElementById('stat-sum');
+  if(connected>0){
+    await startMicStreamingToRelay();
+    sumEl.innerHTML=`📢 <strong style="color:var(--red)">${connected}</strong> account${connected!==1?'s':''} active in VC <code style="color:var(--muted);font-size:.75rem">${vcId}</code>! <div style="margin-top:8px;color:var(--success);font-size:.84rem;font-weight:700">🔴 LIVE MIC BROADCAST ACTIVE — Speak into your mic to broadcast across all accounts!</div>`;
+    toast(`${connected}/${items.length} accounts connected! Speak in your mic to broadcast.`,'🎙️');
+    updateDiscordProfileActivity('Broadcasting Voice in VC ⚡', 'D4Hz WEB — High Frequency Audio', true);
+  }else{
+    sumEl.innerHTML=`<span style="color:#ff6680">❌ All accounts failed to connect. Check tokens.</span>`;
+    toast('All connections failed','❌');
+    document.getElementById('amp-btn').style.display='flex';
+    document.getElementById('stop-btn').style.display='none';
+    S.active=false;
+  }
+}
+
+function stopAmp(){
+  S.active=false;
+  stopMicStreaming();
+  const items=S.mode==='accounts'?S.accounts:S.bots;
+  const guildId=S.server?S.server.id:null;
+
+  // Signal backend relay to stop all voice connections
+  try{
+    fetch('http://127.0.0.1:7432/stop',{method:'POST'}).catch(()=>{});
+  }catch(e){}
+
+  // Reset Discord Profile Activity & Rich Presence
+  updateDiscordProfileActivity('Voice Amplifier Idle', 'D4Hz WEB — High Frequency Audio', false);
+
+  // Close all real Gateway WebSocket connections
+  if(S.gateways&&S.gateways.length){
+    S.gateways.forEach(gw=>{
+      if(gw){
+        try{if(guildId)gw.leaveVC(guildId);}catch(e){}
+        setTimeout(()=>{try{gw.disconnect();}catch(e){}},300);
+      }
+    });
+    S.gateways=[];
+  }
+
+  items.forEach((_,i)=>{
+    const r=document.getElementById(`sr-${i}`);
+    if(r)r.innerHTML=`<div class="dot der"></div><span>${esc(items[i].username)}</span><span class="smsg">Disconnected</span>`;
+  });
+  document.getElementById('pfill').style.width='0%';
+  document.getElementById('stat-sum').textContent='';
+  document.getElementById('amp-btn').style.display='flex';
+  document.getElementById('stop-btn').style.display='none';
+  document.getElementById('stat-sec').style.display='none';
+  document.getElementById('vc-id').value='';
+  toast('All accounts disconnected from VC','⏹');
+}
+
+
+// ============================================================
+//  SOUNDPAD - Custom Sound Board
+// ============================================================
+const SP={sounds:[],masterVol:1.0,masterGain:null};
+function getPadMasterGain(){
+  if(!S.audioCtx)initAudio();
+  if(!SP.masterGain){SP.masterGain=S.audioCtx.createGain();SP.masterGain.gain.value=SP.masterVol;SP.masterGain.connect(S.audioCtx.destination);}
+  return SP.masterGain;
+}
+function updatePadMasterVol(val){SP.masterVol=parseFloat(val)/100;if(SP.masterGain)SP.masterGain.gain.value=SP.masterVol;}
+function triggerPadUpload(){document.getElementById('pad-file-inp').click();}
+async function onPadFilesSelected(files){if(!files||!files.length)return;for(const f of Array.from(files))await addPadSound(f);document.getElementById('pad-file-inp').value='';}
+function fmtDur(s){const m=Math.floor(s/60);return `${m}:${Math.floor(s%60).toString().padStart(2,'0')}`;}
+function addPadSound(file){
+  return new Promise(resolve=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const idx=SP.sounds.length;
+      const name=file.name.replace(/\.[^.]+$/,'').replace(/_/g,' ');
+      SP.sounds.push({name,data:e.target.result,volume:1,buffer:null,source:null,gainNode:null,playing:false,startTime:0,barTimer:null});
+      renderPadBtn(idx);
+      if(S.audioCtx)S.audioCtx.decodeAudioData(e.target.result.slice(0),buf=>{SP.sounds[idx].buffer=buf;const el=document.getElementById('spad-dur-'+idx);if(el)el.textContent=fmtDur(buf.duration);},()=>{});
+      resolve();
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+function renderPadBtn(idx){
+  const s=SP.sounds[idx];
+  const grid=document.getElementById('spad-grid');
+  const addBtn=document.getElementById('spad-add-btn');
+  const div=document.createElement('div');
+  div.className='spad-btn';div.id='spad-btn-'+idx;
+  div.onclick=e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='BUTTON')return;togglePadSound(idx);};
+  const kh=idx<9?`<span class="spad-key">${idx+1}</span>`:'';
+  div.innerHTML=`${kh}<div class="spad-ico">&#127925;</div><input class="spad-name-inp" id="spad-name-${idx}" value="${esc(s.name)}" onclick="event.stopPropagation()" onchange="SP.sounds[${idx}].name=this.value" title="Rename"/><div class="spad-dur" id="spad-dur-${idx}">--</div><div class="spad-acts"><input type="range" class="spad-vol" min="0" max="200" value="100" onclick="event.stopPropagation()" oninput="setPadVol(${idx},this.value)"/><button class="ibtn" style="width:24px;height:24px;font-size:.68rem" onclick="event.stopPropagation();removePadSound(${idx})">&#128465;</button></div><div class="spad-bar" id="spad-bar-${idx}"></div>`;
+  grid.insertBefore(div,addBtn);
+  if(S.audioCtx&&s.data)S.audioCtx.decodeAudioData(s.data.slice(0),buf=>{s.buffer=buf;const el=document.getElementById('spad-dur-'+idx);if(el)el.textContent=fmtDur(buf.duration);},()=>{});
+}
+function setPadVol(idx,val){const s=SP.sounds[idx];if(!s)return;s.volume=parseFloat(val)/100;if(s.gainNode)s.gainNode.gain.value=s.volume*SP.masterVol;}
+
+function broadcastPadSoundToVC(s){
+  if(!s||!s.buffer)return;
+  try{
+    const dest=S.audioCtx.createMediaStreamDestination();
+    const src=S.audioCtx.createBufferSource();
+    src.buffer=s.buffer;
+    src.connect(dest);
+    const rec=new MediaRecorder(dest.stream,{mimeType:'audio/webm;codecs=opus'});
+    const chunks=[];
+    rec.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
+    rec.onstop=()=>{
+      if(chunks.length>0){
+        const blob=new Blob(chunks,{type:'audio/webm'});
+        fetch('http://127.0.0.1:7432/play-sound',{
+          method:'POST',
+          body:blob
+        }).then(r=>r.json()).then(res=>{
+          if(res.ok)toast(`📢 Blasting ${s.name} into Discord VC!`,'⚡');
+        }).catch(()=>{});
+      }
+    };
+    rec.start();
+    src.start();
+    setTimeout(()=>{try{rec.stop();src.stop();}catch(e){}},Math.min((s.buffer.duration*1000)+150,30000));
+  }catch(e){}
+}
+
+async function togglePadSound(idx){
+  const s=SP.sounds[idx];if(!s)return;
+  if(s.playing){stopPadSound(idx);return;}
+  if(!S.audioCtx)initAudio();
+  if(S.audioCtx.state==='suspended')await S.audioCtx.resume();
+  if(!s.buffer){try{s.buffer=await new Promise((res,rej)=>S.audioCtx.decodeAudioData(s.data.slice(0),res,rej));}catch(e){toast('Could not decode audio','X');return;}}
+  const gainNode=S.audioCtx.createGain();gainNode.gain.value=s.volume*SP.masterVol;gainNode.connect(getPadMasterGain());
+  const source=S.audioCtx.createBufferSource();source.buffer=s.buffer;source.connect(gainNode);
+  s.source=source;s.gainNode=gainNode;s.playing=true;s.startTime=S.audioCtx.currentTime;
+  const btn=document.getElementById('spad-btn-'+idx);if(btn)btn.classList.add('playing');
+  const bar=document.getElementById('spad-bar-'+idx);
+  if(bar&&s.buffer.duration>0){s.barTimer=setInterval(()=>{const pct=Math.min(((S.audioCtx.currentTime-s.startTime)/s.buffer.duration)*100,100);bar.style.width=pct+'%';if(pct>=100)clearInterval(s.barTimer);},50);}
+  
+  // Stream audio into Discord Voice Channel via Relay
+  broadcastPadSoundToVC(s);
+
+  source.onended=()=>{
+    s.playing=false;s.source=null;s.gainNode=null;
+    if(s.barTimer){clearInterval(s.barTimer);s.barTimer=null;}
+    if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
+    if(btn)btn.classList.remove('playing');
+  };
+  source.start();toast('Playing: '+s.name,'&#127925;');
+}
+function stopPadSound(idx){
+  const s=SP.sounds[idx];if(!s||!s.playing)return;
+  try{s.source.stop();}catch(e){}
+  s.playing=false;s.source=null;s.gainNode=null;
+  if(s.barTimer){clearInterval(s.barTimer);s.barTimer=null;}
+  const bar=document.getElementById('spad-bar-'+idx);if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
+  const btn=document.getElementById('spad-btn-'+idx);if(btn)btn.classList.remove('playing');
+}
+function stopAllPadSounds(){SP.sounds.forEach((_,i)=>stopPadSound(i));try{fetch('http://127.0.0.1:7432/stop-sound',{method:'POST'}).catch(()=>{});}catch(e){}toast('All sounds stopped','X');}
+function removePadSound(idx){
+  stopPadSound(idx);SP.sounds.splice(idx,1);
+  const grid=document.getElementById('spad-grid');
+  Array.from(grid.querySelectorAll('.spad-btn')).forEach(el=>el.remove());
+  SP.sounds.forEach((_,i)=>renderPadBtn(i));
+  toast('Sound removed','X');
+}
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+  const n=parseInt(e.key);if(n>=1&&n<=9&&SP.sounds[n-1])togglePadSound(n-1);
+});
+
+renderAccs();renderBots();populateMicDevices();
+</script>
+</body>
+</html>
