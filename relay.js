@@ -19,6 +19,14 @@ try {
   console.warn('[Relay] DAVE E2EE package not loaded:', e.message);
 }
 
+// Global exception shielding to prevent daemon crashes from network anomalies
+process.on('uncaughtException', (err) => {
+  console.error('[Relay] ⚠️ Uncaught Exception intercepted:', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Relay] ⚠️ Unhandled Rejection intercepted:', reason);
+});
+
 const PORT = 7432;
 const activeClients = new Map(); // token -> NativeVoiceClient
 const voiceStatesByGuild = new Map(); // guildId -> Map(userId, voiceState)
@@ -438,6 +446,7 @@ class NativeVoiceClient {
 
     try {
       this.voiceWs = new WebSocket(voiceWsUrl);
+      this.voiceWs.binaryType = 'arraybuffer';
     } catch (e) {
       if (this._voiceReadyReject) this._voiceReadyReject(e);
       return;
@@ -447,15 +456,32 @@ class NativeVoiceClient {
       console.log(`[${this.username}] Voice WS connected`);
     };
 
-    this.voiceWs.onmessage = (ev) => {
+    this.voiceWs.onmessage = async (ev) => {
       // 1. Binary message from Discord Voice Gateway (Opcodes 25, 27, 28, 29, 30)
       if (typeof ev.data !== 'string') {
-        const buffer = Buffer.isBuffer(ev.data) ? ev.data : Buffer.from(ev.data);
-        if (buffer.length >= 3) {
-          const seq = buffer.readUInt16BE(0);
-          const op = buffer.readUInt8(2);
-          const payload = buffer.subarray(3);
-          this._handleVoiceBinaryMessage(op, payload, seq);
+        try {
+          let buffer;
+          if (Buffer.isBuffer(ev.data)) {
+            buffer = ev.data;
+          } else if (ev.data instanceof ArrayBuffer) {
+            buffer = Buffer.from(ev.data);
+          } else if (ArrayBuffer.isView(ev.data)) {
+            buffer = Buffer.from(ev.data.buffer, ev.data.byteOffset, ev.data.byteLength);
+          } else if (ev.data && typeof ev.data.arrayBuffer === 'function') {
+            const ab = await ev.data.arrayBuffer();
+            buffer = Buffer.from(ab);
+          } else {
+            buffer = Buffer.from(ev.data);
+          }
+
+          if (buffer.length >= 3) {
+            const seq = buffer.readUInt16BE(0);
+            const op = buffer.readUInt8(2);
+            const payload = buffer.subarray(3);
+            this._handleVoiceBinaryMessage(op, payload, seq);
+          }
+        } catch (binErr) {
+          console.error(`[${this.username}] Error handling voice binary message:`, binErr.message);
         }
         return;
       }
@@ -535,7 +561,8 @@ class NativeVoiceClient {
           break;
         }
         case 22: { // DAVE Execute Transition
-          console.log(`[${this.username}] DAVE Execute Transition (id: ${msg.d && msg.d.transition_id})`);
+          const tId = msg.d && msg.d.transition_id;
+          console.log(`[${this.username}] ✅ DAVE Execute Transition (id: ${tId}). Group transition complete! Ready: ${this.daveSession ? this.daveSession.ready : false}`);
           break;
         }
         case 24: { // DAVE Prepare Epoch
@@ -553,7 +580,7 @@ class NativeVoiceClient {
           break;
         }
         case 25: { // DAVE MLS External Sender
-          console.log(`[${this.username}] DAVE MLS External Sender package received`);
+          console.log(`[${this.username}] DAVE MLS External Sender package received (JSON)`);
           break;
         }
       }
@@ -609,34 +636,47 @@ class NativeVoiceClient {
         case 27: { // DaveMlsProposals
           console.log(`[${this.username}] 📥 Received DAVE MLS Proposals (${payload.length} bytes)`);
           const optype = payload.readUInt8(0);
+          const proposals = payload.subarray(1);
           const { commit, welcome } = this.daveSession.processProposals(
             optype,
-            payload.subarray(1),
+            proposals,
             [String(this.userId)]
           );
           if (commit) {
             const commitWelcome = welcome ? Buffer.concat([commit, welcome]) : commit;
             this._sendVoiceBinary(28, commitWelcome);
-            console.log(`[${this.username}] 📤 Sent DAVE MLS Commit Welcome (Opcode 28)`);
+            console.log(`[${this.username}] 📤 Sent DAVE MLS Commit Welcome (Opcode 28, ${commitWelcome.length} bytes)`);
           }
           break;
         }
         case 29: { // DaveMlsAnnounceCommitTransition
           console.log(`[${this.username}] 📥 Received DAVE MLS Announce Commit Transition (${payload.length} bytes)`);
-          const { transitionId, success } = this.daveSession.processCommit(payload);
-          if (success && transitionId !== 0 && this.voiceWs && this.voiceWs.readyState === 1) {
-            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
-            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+          if (payload.length >= 2) {
+            const transitionId = payload.readUInt16BE(0);
+            const commitMessage = payload.subarray(2);
+            this.daveSession.processCommit(commitMessage);
+            if (this.voiceWs && this.voiceWs.readyState === 1) {
+              this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
+              console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+            }
           }
           break;
         }
         case 30: { // DaveMlsWelcome
           console.log(`[${this.username}] 📥 Received DAVE MLS Welcome (${payload.length} bytes)`);
-          const { transitionId, success } = this.daveSession.processWelcome(payload);
-          if (success && transitionId !== 0 && this.voiceWs && this.voiceWs.readyState === 1) {
-            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
-            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+          if (payload.length >= 2) {
+            const transitionId = payload.readUInt16BE(0);
+            const welcomeMessage = payload.subarray(2);
+            this.daveSession.processWelcome(welcomeMessage);
+            if (this.voiceWs && this.voiceWs.readyState === 1) {
+              this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
+              console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+            }
           }
+          break;
+        }
+        default: {
+          console.log(`[${this.username}] 📥 Voice binary opcode ${op} received (${payload.length} bytes, seq: ${seq})`);
           break;
         }
       }
@@ -729,11 +769,16 @@ class NativeVoiceClient {
     try {
       // 1. DAVE end-to-end encryption if active
       let audioPayload = opusBuffer;
-      if (this.daveSession && this.daveSession.ready) {
-        try {
-          audioPayload = this.daveSession.encryptOpus(opusBuffer);
-        } catch (e) {
-          // fallback to raw opus
+      if (this.daveSession) {
+        if (this.daveSession.ready) {
+          try {
+            audioPayload = this.daveSession.encryptOpus(opusBuffer);
+          } catch (e) {
+            return;
+          }
+        } else {
+          // Waiting for MLS group transition to complete
+          return;
         }
       }
 
