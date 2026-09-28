@@ -452,6 +452,109 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
       </div>
     </div>
 
+    <!-- AUDIO PLAYER & SOUNDBOARD BROADCASTER STUDIO -->
+    <div class="sec" id="audio-player-sec" style="border-color:rgba(255,26,46,.4);background:linear-gradient(135deg,rgba(18,4,7,.95),rgba(28,4,14,.92))">
+      <div class="slbl" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="display:flex;align-items:center;gap:8px">
+          🎵 Audio Player &amp; Soundboard Broadcaster
+          <span class="badge badge-g" id="audio-live-badge" style="display:none">PLAYING &amp; BROADCASTING</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="pill pill-s" id="audio-monitor-btn" style="font-size:.68rem;padding:5px 12px" onclick="toggleAudioMonitor()">
+            🎧 HEAR AUDIO: ON
+          </button>
+          <button class="pill pill-s" style="font-size:.68rem;padding:5px 12px" onclick="document.getElementById('audio-file-input').click()">
+            📁 LOAD AUDIO FILE
+          </button>
+          <input type="file" id="audio-file-input" accept="audio/*" style="display:none" onchange="loadCustomAudioFile(this.files[0])"/>
+        </div>
+      </div>
+
+      <div style="font-size:.73rem;color:rgba(255,255,255,.5);margin-bottom:14px;line-height:1.5">
+        Play songs or audio files (MP3, WAV, OGG, FLAC) or trigger instant Soundboard FX — the audio is processed through the sound effects and broadcasted live to Discord VC!
+      </div>
+
+      <!-- Loaded Track Info & Controls -->
+      <div id="audio-track-card" style="background:rgba(0,0,0,.5);border:1px solid rgba(255,26,46,.25);border-radius:12px;padding:12px 16px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <div id="audio-track-icon" style="font-size:1.4rem">🎵</div>
+            <div style="min-width:0">
+              <div id="audio-track-title" style="font-size:.85rem;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No Audio File Loaded — Pick a sound or upload MP3</div>
+              <div id="audio-track-sub" style="font-size:.68rem;color:var(--muted)">Click LOAD AUDIO FILE or trigger instant soundpad FX below</div>
+            </div>
+          </div>
+          <div id="audio-time-display" style="font-size:.75rem;font-family:monospace;font-weight:700;color:var(--muted)">00:00 / 00:00</div>
+        </div>
+
+        <!-- Progress / Seek Bar -->
+        <input type="range" class="slider" id="audio-seek-slider" min="0" max="100" value="0" step="0.1" oninput="seekAudioTrack(this.value)" style="width:100%;margin-bottom:10px"/>
+
+        <!-- Control Buttons -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;gap:8px">
+            <button class="pill pill-s" id="btn-audio-play" style="padding:6px 16px;font-size:.72rem" onclick="toggleAudioPlayback()">
+              ▶️ PLAY
+            </button>
+            <button class="pill pill-o" id="btn-audio-stop" style="padding:6px 14px;font-size:.72rem" onclick="stopAudioPlayback()">
+              ⏹️ STOP
+            </button>
+            <button class="pill pill-o" id="btn-audio-loop" style="padding:6px 12px;font-size:.72rem" onclick="toggleAudioLoop()">
+              🔁 LOOP: OFF
+            </button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:.68rem;font-weight:700;color:var(--muted)">VOLUME</span>
+            <input type="range" class="slider" id="sl-audio-vol" min="0" max="200" value="100" oninput="setAudioVolume(this.value)" style="width:90px"/>
+            <span id="audio-vol-v" style="font-size:.7rem;font-family:monospace;color:var(--red);min-width:32px">100%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- INSTANT SOUNDPAD PRESETS -->
+      <div style="margin-top:10px">
+        <div style="font-size:.7rem;font-weight:800;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Instant Soundboard FX (Click or Press 1-6 to Blast into VC)</div>
+        <div class="spad-grid">
+          <div class="spad-btn" id="spad-1" onclick="playSoundFx('bassdrop')">
+            <span class="spad-key">[1]</span>
+            <div class="spad-ico">💥</div>
+            <div class="spad-nm">808 Bass Drop</div>
+            <div class="spad-dur">Sub Rumble</div>
+          </div>
+          <div class="spad-btn" id="spad-2" onclick="playSoundFx('airhorn')">
+            <span class="spad-key">[2]</span>
+            <div class="spad-ico">📢</div>
+            <div class="spad-nm">Airhorn Blast</div>
+            <div class="spad-dur">Hype Horn</div>
+          </div>
+          <div class="spad-btn" id="spad-3" onclick="playSoundFx('laser')">
+            <span class="spad-key">[3]</span>
+            <div class="spad-ico">⚡</div>
+            <div class="spad-nm">Cyber Laser</div>
+            <div class="spad-dur">Glitch Zap</div>
+          </div>
+          <div class="spad-btn" id="spad-4" onclick="playSoundFx('siren')">
+            <span class="spad-key">[4]</span>
+            <div class="spad-ico">🚨</div>
+            <div class="spad-nm">Alarm Siren</div>
+            <div class="spad-dur">Emergency</div>
+          </div>
+          <div class="spad-btn" id="spad-5" onclick="playSoundFx('robot')">
+            <span class="spad-key">[5]</span>
+            <div class="spad-ico">🤖</div>
+            <div class="spad-nm">Alien Robot</div>
+            <div class="spad-dur">Cyber Vox</div>
+          </div>
+          <div class="spad-btn" id="spad-6" onclick="playSoundFx('death')">
+            <span class="spad-key">[6]</span>
+            <div class="spad-ico">💀</div>
+            <div class="spad-nm">Death Boom</div>
+            <div class="spad-dur">Deep Impact</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- DISCORD PROFILE ACTIVITY (RICH PRESENCE WITH DEATH.gif) -->
     <div class="sec" id="discord-act-sec" style="border-color:rgba(255,26,46,.45);background:linear-gradient(135deg,rgba(18,4,7,.95),rgba(35,6,12,.92));box-shadow:0 0 25px rgba(255,26,46,.15)">
       <div class="slbl" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -1260,7 +1363,7 @@ function stopPttSpeaking() {
   updateMicUiStatus();
 }
 
-// Global keybinds: Space for PTT (when not typing in an input), M for Mute
+// Global keybinds: Space for PTT, M for Mute, 1-6 for Soundpad FX
 window.addEventListener('keydown', (e) => {
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
   if (e.code === 'KeyM') {
@@ -1269,6 +1372,11 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'Space' && MIC.transmitMode === 'ptt' && !e.repeat) {
     e.preventDefault();
     startPttSpeaking();
+  } else if (['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Numpad1','Numpad2','Numpad3','Numpad4','Numpad5','Numpad6'].includes(e.code) && !e.repeat) {
+    e.preventDefault();
+    const fxList = ['bassdrop', 'airhorn', 'laser', 'siren', 'robot', 'death'];
+    const num = parseInt(e.code.replace('Digit','').replace('Numpad','')) - 1;
+    if (fxList[num]) playSoundFx(fxList[num]);
   }
 });
 
@@ -1307,9 +1415,32 @@ function updateMicUiStatus() {
   }
 }
 
-// 3. Audio graph integration: Mic -> Effects -> Destination + Monitor
-function setupAudioNodesWithMic() {
+// 3. Audio graph integration: Mic & Audio Player -> Effects -> Destination + Monitor
+function ensureDestNode() {
   if (!S.audioCtx) initAudio();
+  const ctx = S.audioCtx;
+  if (!MIC.destNode) {
+    MIC.destNode = ctx.createMediaStreamDestination();
+  }
+  if (!MIC.analyserNode) {
+    MIC.analyserNode = ctx.createAnalyser();
+    MIC.analyserNode.fftSize = 256;
+    MIC.analyserNode.smoothingTimeConstant = 0.75;
+  }
+  if (!MIC.monitorGainNode) {
+    MIC.monitorGainNode = ctx.createGain();
+    MIC.monitorGainNode.gain.value = MIC.isMonitoring ? 0.9 : 0;
+    MIC.monitorGainNode.connect(ctx.destination);
+  }
+  try {
+    S.nodes.gain.connect(MIC.analyserNode);
+    MIC.analyserNode.connect(MIC.destNode);
+    MIC.analyserNode.connect(MIC.monitorGainNode);
+  } catch (e) {}
+}
+
+function setupAudioNodesWithMic() {
+  ensureDestNode();
   if (!MIC.stream) return;
 
   try {
@@ -1318,45 +1449,13 @@ function setupAudioNodesWithMic() {
     }
 
     const ctx = S.audioCtx;
-    const n = S.nodes;
-
     MIC.sourceNode = ctx.createMediaStreamSource(MIC.stream);
     if (!MIC.gainNode) {
       MIC.gainNode = ctx.createGain();
       MIC.gainNode.gain.value = MIC.gainMultiplier;
     }
-    if (!MIC.analyserNode) {
-      MIC.analyserNode = ctx.createAnalyser();
-      MIC.analyserNode.fftSize = 256;
-      MIC.analyserNode.smoothingTimeConstant = 0.75;
-    }
-    if (!MIC.monitorGainNode) {
-      MIC.monitorGainNode = ctx.createGain();
-      MIC.monitorGainNode.gain.value = MIC.isMonitoring ? 0.9 : 0;
-      MIC.monitorGainNode.connect(ctx.destination);
-    }
-    if (!MIC.destNode) {
-      MIC.destNode = ctx.createMediaStreamDestination();
-    }
-
-    // Connect DSP Chain:
-    // source -> gainNode -> hpf -> bass -> mid -> treble -> lpf -> wave -> comp -> pan -> gain -> analyser -> destNode & monitor
     MIC.sourceNode.connect(MIC.gainNode);
-    MIC.gainNode.connect(n.hpf);
-
-    n.hpf.connect(n.bass);
-    n.bass.connect(n.mid);
-    n.mid.connect(n.treble);
-    n.treble.connect(n.lpf);
-    n.lpf.connect(n.wave);
-    n.wave.connect(n.comp);
-    n.comp.connect(n.pan);
-    n.pan.connect(n.gain);
-
-    // From master gain to analyser, destination for broadcast, and monitor
-    n.gain.connect(MIC.analyserNode);
-    MIC.analyserNode.connect(MIC.destNode);
-    MIC.analyserNode.connect(MIC.monitorGainNode);
+    MIC.gainNode.connect(S.nodes.hpf);
 
     console.log('[MIC] Audio DSP effects graph fully wired');
   } catch (err) {
@@ -1455,9 +1554,328 @@ function sendSpeakingState(isSpeaking) {
   }
 }
 
+// ══════════════════════════════════════════════════════════
+//  AUDIO PLAYER & SOUNDPAD BROADCAST ENGINE
+// ══════════════════════════════════════════════════════════
+const AUDIO_PLAYER = {
+  element: null,
+  sourceNode: null,
+  gainNode: null,
+  monitorGainNode: null,
+  isMonitorOn: true,
+  isLooping: false,
+  isPlaying: false,
+  volume: 1.0,
+  currentName: ''
+};
+
+function fmtTime(sec) {
+  if (!sec || isNaN(sec) || !isFinite(sec)) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function isAnyAudioActive() {
+  const isPlayingTrack = AUDIO_PLAYER.element && !AUDIO_PLAYER.element.paused && !AUDIO_PLAYER.element.ended;
+  const isMicLive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
+  return !!(isPlayingTrack || isMicLive);
+}
+
+function initAudioPlayerNodes() {
+  if (!S.audioCtx) initAudio();
+  const ctx = S.audioCtx;
+
+  if (!AUDIO_PLAYER.element) {
+    AUDIO_PLAYER.element = new Audio();
+    AUDIO_PLAYER.element.crossOrigin = 'anonymous';
+
+    AUDIO_PLAYER.element.onplay = () => {
+      AUDIO_PLAYER.isPlaying = true;
+      updateAudioPlayerUi();
+      sendSpeakingState(true);
+      if (S.active && !MIC.activeBroadcasting) {
+        startMicStreamingToRelay();
+      }
+    };
+
+    AUDIO_PLAYER.element.onpause = () => {
+      AUDIO_PLAYER.isPlaying = false;
+      updateAudioPlayerUi();
+      if (!isAnyAudioActive()) sendSpeakingState(false);
+    };
+
+    AUDIO_PLAYER.element.onended = () => {
+      AUDIO_PLAYER.isPlaying = false;
+      updateAudioPlayerUi();
+      if (!isAnyAudioActive()) sendSpeakingState(false);
+    };
+
+    AUDIO_PLAYER.element.ontimeupdate = () => {
+      const el = AUDIO_PLAYER.element;
+      if (!el || !el.duration) return;
+      const cur = el.currentTime || 0;
+      const dur = el.duration || 0;
+      const pct = (cur / dur) * 100;
+      const slider = document.getElementById('audio-seek-slider');
+      if (slider && !slider.dataset.seeking) {
+        slider.value = pct;
+      }
+      const timeEl = document.getElementById('audio-time-display');
+      if (timeEl) {
+        timeEl.textContent = `${fmtTime(cur)} / ${fmtTime(dur)}`;
+      }
+    };
+  }
+
+  if (!AUDIO_PLAYER.gainNode) {
+    AUDIO_PLAYER.gainNode = ctx.createGain();
+    AUDIO_PLAYER.gainNode.gain.value = AUDIO_PLAYER.volume;
+  }
+
+  if (!AUDIO_PLAYER.monitorGainNode) {
+    AUDIO_PLAYER.monitorGainNode = ctx.createGain();
+    AUDIO_PLAYER.monitorGainNode.gain.value = AUDIO_PLAYER.isMonitorOn ? 1.0 : 0;
+    AUDIO_PLAYER.monitorGainNode.connect(ctx.destination);
+  }
+
+  if (!AUDIO_PLAYER.sourceNode && AUDIO_PLAYER.element) {
+    try {
+      AUDIO_PLAYER.sourceNode = ctx.createMediaElementSource(AUDIO_PLAYER.element);
+      AUDIO_PLAYER.sourceNode.connect(AUDIO_PLAYER.gainNode);
+      AUDIO_PLAYER.gainNode.connect(S.nodes.hpf);
+      AUDIO_PLAYER.gainNode.connect(AUDIO_PLAYER.monitorGainNode);
+    } catch (e) {
+      console.log('[AudioPlayer] createMediaElementSource:', e.message);
+    }
+  }
+
+  ensureDestNode();
+}
+
+function loadCustomAudioFile(file) {
+  if (!file) return;
+  initAudioPlayerNodes();
+  const url = URL.createObjectURL(file);
+  AUDIO_PLAYER.element.src = url;
+  AUDIO_PLAYER.currentName = file.name;
+
+  const titleEl = document.getElementById('audio-track-title');
+  const subEl = document.getElementById('audio-track-sub');
+  if (titleEl) titleEl.textContent = file.name;
+  if (subEl) subEl.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB • Ready to Broadcast`;
+
+  AUDIO_PLAYER.element.load();
+  AUDIO_PLAYER.element.play().catch(() => {});
+  toast('Loaded & Playing ' + file.name, '🎵');
+}
+
+function toggleAudioPlayback() {
+  initAudioPlayerNodes();
+  const el = AUDIO_PLAYER.element;
+  if (!el || !el.src) {
+    playSoundFx('bassdrop');
+    return;
+  }
+  if (el.paused) {
+    el.play().catch(e => toast('Play error: ' + e.message, '⚠️'));
+  } else {
+    el.pause();
+  }
+}
+
+function stopAudioPlayback() {
+  if (AUDIO_PLAYER.element) {
+    AUDIO_PLAYER.element.pause();
+    AUDIO_PLAYER.element.currentTime = 0;
+  }
+  AUDIO_PLAYER.isPlaying = false;
+  updateAudioPlayerUi();
+  if (!isAnyAudioActive()) sendSpeakingState(false);
+}
+
+function toggleAudioLoop() {
+  AUDIO_PLAYER.isLooping = !AUDIO_PLAYER.isLooping;
+  if (AUDIO_PLAYER.element) {
+    AUDIO_PLAYER.element.loop = AUDIO_PLAYER.isLooping;
+  }
+  const btn = document.getElementById('btn-audio-loop');
+  if (btn) {
+    btn.className = AUDIO_PLAYER.isLooping ? 'pill pill-s' : 'pill pill-o';
+    btn.textContent = AUDIO_PLAYER.isLooping ? '🔁 LOOP: ON' : '🔁 LOOP: OFF';
+  }
+  toast(AUDIO_PLAYER.isLooping ? 'Loop Mode Enabled' : 'Loop Mode Disabled', '🔁');
+}
+
+function toggleAudioMonitor() {
+  initAudioPlayerNodes();
+  AUDIO_PLAYER.isMonitorOn = !AUDIO_PLAYER.isMonitorOn;
+  if (AUDIO_PLAYER.monitorGainNode) {
+    AUDIO_PLAYER.monitorGainNode.gain.value = AUDIO_PLAYER.isMonitorOn ? 1.0 : 0;
+  }
+  const btn = document.getElementById('audio-monitor-btn');
+  if (btn) {
+    btn.className = AUDIO_PLAYER.isMonitorOn ? 'pill pill-s' : 'pill pill-o';
+    btn.textContent = AUDIO_PLAYER.isMonitorOn ? '🎧 HEAR AUDIO: ON' : '🎧 HEAR AUDIO: OFF';
+  }
+  toast(AUDIO_PLAYER.isMonitorOn ? 'Hearing Audio Locally' : 'Local Audio Muted (Still Broadcasting)', '🎧');
+}
+
+function seekAudioTrack(pct) {
+  if (AUDIO_PLAYER.element && AUDIO_PLAYER.element.duration) {
+    AUDIO_PLAYER.element.currentTime = (parseFloat(pct) / 100) * AUDIO_PLAYER.element.duration;
+  }
+}
+
+function setAudioVolume(val) {
+  AUDIO_PLAYER.volume = parseFloat(val) / 100;
+  if (AUDIO_PLAYER.gainNode) {
+    AUDIO_PLAYER.gainNode.gain.value = AUDIO_PLAYER.volume;
+  }
+  const el = document.getElementById('audio-vol-v');
+  if (el) el.textContent = val + '%';
+}
+
+function updateAudioPlayerUi() {
+  const btnPlay = document.getElementById('btn-audio-play');
+  const liveBadge = document.getElementById('audio-live-badge');
+
+  if (btnPlay) {
+    btnPlay.textContent = AUDIO_PLAYER.isPlaying ? '⏸️ PAUSE' : '▶️ PLAY';
+  }
+  if (liveBadge) {
+    liveBadge.style.display = AUDIO_PLAYER.isPlaying ? 'inline-flex' : 'none';
+  }
+}
+
+// 6. Instant Procedural Soundboard FX (Zero external dependencies)
+function playSoundFx(type) {
+  if (!S.audioCtx) initAudio();
+  ensureDestNode();
+  initAudioPlayerNodes();
+  const ctx = S.audioCtx;
+  const now = ctx.currentTime;
+  const fxGain = ctx.createGain();
+  fxGain.connect(S.nodes.hpf);
+  if (AUDIO_PLAYER.monitorGainNode) fxGain.connect(AUDIO_PLAYER.monitorGainNode);
+
+  sendSpeakingState(true);
+  if (S.active && !MIC.activeBroadcasting) {
+    startMicStreamingToRelay();
+  }
+
+  const padMap = { bassdrop: 'spad-1', airhorn: 'spad-2', laser: 'spad-3', siren: 'spad-4', robot: 'spad-5', death: 'spad-6' };
+  const padEl = document.getElementById(padMap[type]);
+  if (padEl) {
+    padEl.classList.add('playing');
+    setTimeout(() => padEl.classList.remove('playing'), 1200);
+  }
+
+  if (type === 'bassdrop') {
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.exponentialRampToValueAtTime(32, now + 1.2);
+
+    fxGain.gain.setValueAtTime(1.5, now);
+    fxGain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+
+    osc.connect(fxGain);
+    osc.start(now);
+    osc.stop(now + 1.5);
+    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 1500);
+
+  } else if (type === 'airhorn') {
+    const freqs = [466.16, 622.25, 932.33];
+    const dur = 0.8;
+    freqs.forEach(f => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, now);
+      osc.frequency.linearRampToValueAtTime(f * 1.02, now + 0.1);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.4, now);
+      g.gain.setValueAtTime(0.4, now + dur - 0.1);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+      osc.connect(g);
+      g.connect(fxGain);
+      osc.start(now);
+      osc.stop(now + dur);
+    });
+    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 900);
+
+  } else if (type === 'laser') {
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(2800, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.35);
+
+    fxGain.gain.setValueAtTime(0.9, now);
+    fxGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+    osc.connect(fxGain);
+    osc.start(now);
+    osc.stop(now + 0.45);
+    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 500);
+
+  } else if (type === 'siren') {
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.linearRampToValueAtTime(1100, now + 0.3);
+    osc.frequency.linearRampToValueAtTime(600, now + 0.6);
+    osc.frequency.linearRampToValueAtTime(1100, now + 0.9);
+    osc.frequency.linearRampToValueAtTime(600, now + 1.2);
+
+    fxGain.gain.setValueAtTime(0.8, now);
+    fxGain.gain.exponentialRampToValueAtTime(0.001, now + 1.3);
+
+    osc.connect(fxGain);
+    osc.start(now);
+    osc.stop(now + 1.35);
+    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 1400);
+
+  } else if (type === 'robot') {
+    const pitches = [440, 880, 1320, 1760, 880];
+    pitches.forEach((p, idx) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(p, now + idx * 0.08);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.3, now + idx * 0.08);
+      g.gain.exponentialRampToValueAtTime(0.001, now + (idx + 1) * 0.08);
+      osc.connect(g);
+      g.connect(fxGain);
+      osc.start(now + idx * 0.08);
+      osc.stop(now + (idx + 1) * 0.08);
+    });
+    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 600);
+
+  } else if (type === 'death') {
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.exponentialRampToValueAtTime(22, now + 1.5);
+
+    fxGain.gain.setValueAtTime(1.8, now);
+    fxGain.gain.exponentialRampToValueAtTime(0.001, now + 1.8);
+
+    osc.connect(fxGain);
+    osc.start(now);
+    osc.stop(now + 1.9);
+    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 1900);
+  }
+}
+
 async function startMicStreamingToRelay() {
-  await initMicSystem(true);
-  if (!MIC.stream || !MIC.destNode) return;
+  if (!MIC.stream) {
+    await initMicSystem(false);
+  }
+  ensureDestNode();
+  initAudioPlayerNodes();
+  if (!MIC.destNode) return;
 
   connectMicWebSocket();
 
@@ -1477,8 +1895,9 @@ async function startMicStreamingToRelay() {
 
     MIC.mediaRecorder.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
-      if (MIC.isMuted) return;
-      if (MIC.transmitMode === 'ptt' && !MIC.isPttActive) return;
+      const isMicActive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
+      const isPlayerActive = AUDIO_PLAYER.isPlaying;
+      if (!isMicActive && !isPlayerActive) return;
 
       if (MIC.ws && MIC.ws.readyState === 1) {
         try {
@@ -1486,7 +1905,6 @@ async function startMicStreamingToRelay() {
           MIC.ws.send(buf);
         } catch (err) {}
       } else {
-        // Fallback to HTTP POST chunk
         fetch('http://127.0.0.1:7432/mic-chunk', {
           method: 'POST',
           body: e.data
@@ -1494,13 +1912,12 @@ async function startMicStreamingToRelay() {
       }
     };
 
-    // Timeslice 100ms for continuous low-latency live audio streaming
     MIC.mediaRecorder.start(100);
     MIC.activeBroadcasting = true;
     updateMicUiStatus();
-    console.log('[MIC] MediaRecorder streaming live microphone audio');
+    console.log('[Audio] Live media recorder broadcasting to Discord VC');
   } catch (err) {
-    console.error('[MIC] Failed to start MediaRecorder:', err.message);
+    console.error('[Audio] Failed to start MediaRecorder:', err.message);
   }
 }
 
@@ -1558,6 +1975,18 @@ function initAudio(){
   n.osc=ctx.createOscillator();n.osc.frequency.value=0.25;
   n.oscG=ctx.createGain();n.oscG.gain.value=0.003;
   n.osc.connect(n.oscG);n.oscG.connect(n.chorusDelay.delayTime);n.osc.start();
+
+  // Connect base effects chain
+  try {
+    n.hpf.connect(n.bass);
+    n.bass.connect(n.mid);
+    n.mid.connect(n.treble);
+    n.treble.connect(n.lpf);
+    n.lpf.connect(n.wave);
+    n.wave.connect(n.comp);
+    n.comp.connect(n.pan);
+    n.pan.connect(n.gain);
+  } catch (e) {}
 }
 
 function applyNode(key,val){
@@ -1829,8 +2258,9 @@ async function startAmp(){
   const sumEl=document.getElementById('stat-sum');
   if(connected>0){
     await startMicStreamingToRelay();
-    sumEl.innerHTML=`📢 <strong style="color:var(--red)">${connected}</strong> account${connected!==1?'s':''} active in VC <code style="color:var(--muted);font-size:.75rem">${vcId}</code>! <div style="margin-top:8px;color:var(--success);font-size:.84rem;font-weight:700">🔴 LIVE MIC BROADCAST ACTIVE — Speak into your mic to broadcast across all accounts!</div>`;
-    toast(`${connected}/${items.length} accounts connected! Speak in your mic to broadcast.`,'🎙️');
+    initAudioPlayerNodes();
+    sumEl.innerHTML=`📢 <strong style="color:var(--red)">${connected}</strong> account${connected!==1?'s':''} active in VC <code style="color:var(--muted);font-size:.75rem">${vcId}</code>! <div style="margin-top:8px;color:var(--success);font-size:.84rem;font-weight:700">🔴 LIVE MIC &amp; AUDIO BROADCAST ACTIVE — Speak in your mic or play audio/soundpad into VC!</div>`;
+    toast(`${connected}/${items.length} accounts connected! Mic &amp; Audio Player ready.`,'🎙️');
     updateDiscordProfileActivity('Broadcasting Voice in VC ⚡', 'D4Hz WEB — High Frequency Audio', true);
   }else{
     sumEl.innerHTML=`<span style="color:#ff6680">❌ All accounts failed to connect. Check tokens.</span>`;
@@ -1844,6 +2274,7 @@ async function startAmp(){
 function stopAmp(){
   S.active=false;
   stopMicStreaming();
+  stopAudioPlayback();
   const items=S.mode==='accounts'?S.accounts:S.bots;
   const guildId=S.server?S.server.id:null;
 

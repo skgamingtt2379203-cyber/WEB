@@ -409,7 +409,7 @@ class NativeVoiceClient {
               token: this.voiceToken,
               video: false,
               streams: [],
-              max_dave_protocol_version: 1
+              max_dave_protocol_version: 0
             }
           }));
 
@@ -479,7 +479,7 @@ class NativeVoiceClient {
     this.voiceWs.send(JSON.stringify({
       op: 5,
       d: {
-        speaking: speaking ? 5 : 0, // 5 = Mic + Priority
+        speaking: speaking ? 1 : 0, // 1 = Microphone
         delay: 0,
         ssrc: this.ssrc
       }
@@ -550,9 +550,9 @@ class NativeVoiceClient {
       this.timestamp = (this.timestamp + 960) >>> 0; // 20ms @ 48kHz
       header.writeUInt32BE(this.ssrc >>> 0, 8);
 
-      // AES-256-GCM encryption with 4-byte counter
+      // AES-256-GCM encryption with 4-byte counter (Little Endian as required by Discord AEAD spec)
       const nonce = Buffer.alloc(12, 0);
-      nonce.writeUInt32BE(this.packetCounter >>> 0, 0);
+      nonce.writeUInt32LE(this.packetCounter >>> 0, 0);
 
       const cipher = crypto.createCipheriv('aes-256-gcm', this.secretKey, nonce);
       cipher.setAAD(header);
@@ -560,7 +560,7 @@ class NativeVoiceClient {
       const authTag = cipher.getAuthTag();
 
       const counterBuf = Buffer.alloc(4);
-      counterBuf.writeUInt32BE(this.packetCounter >>> 0, 0);
+      counterBuf.writeUInt32LE(this.packetCounter >>> 0, 0);
       this.packetCounter = (this.packetCounter + 1) >>> 0;
 
       const rtpPacket = Buffer.concat([header, encrypted, authTag, counterBuf]);
@@ -676,7 +676,8 @@ function extractOpusFromWebMStream(buf) {
         lenLen = 4;
       }
 
-      if (lenLen > 0) {
+      // Sanity check length for an Opus frame (must be at least 4 bytes and at most 2048 bytes)
+      if (lenLen > 0 && len >= 4 && len <= 2048) {
         const blockStart = i + 1 + lenLen;
         const blockEnd = blockStart + len;
         if (blockEnd > buf.length) {
