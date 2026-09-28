@@ -440,7 +440,12 @@ class NativeVoiceClient {
 
     this.voiceWs.onmessage = (ev) => {
       let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
+      try {
+        const text = typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8');
+        msg = JSON.parse(text);
+      } catch {
+        return; // binary packet / non-json, skip
+      }
 
       switch (msg.op) {
         case 8: { // HELLO
@@ -450,13 +455,13 @@ class NativeVoiceClient {
           this.voiceWs.send(JSON.stringify({
             op: 0,
             d: {
-              server_id: String(this.guildId),
+              server_id: String(this.guildId || this.channelId),
               user_id: String(this.userId),
               session_id: String(this.sessionId),
               token: this.voiceToken,
               video: false,
               streams: [],
-              max_dave_protocol_version: 0
+              max_dave_protocol_version: 1
             }
           }));
 
@@ -476,7 +481,8 @@ class NativeVoiceClient {
         case 4: { // SESSION_DESCRIPTION
           this.secretKey = Buffer.from(msg.d.secret_key);
           this.voiceMode = msg.d.mode || 'aead_aes256_gcm_rtpsize';
-          console.log(`[${this.username}] Voice SESSION_DESCRIPTION: mode=${this.voiceMode}`);
+          const daveVer = msg.d.dave_protocol_version !== undefined ? msg.d.dave_protocol_version : 'none';
+          console.log(`[${this.username}] Voice SESSION_DESCRIPTION: mode=${this.voiceMode}, dave_version=${daveVer}`);
 
           // Send Op 5 Speaking (1 = Microphone, 4 = Priority)
           this._sendSpeaking(true);
@@ -486,6 +492,30 @@ class NativeVoiceClient {
           break;
         }
         case 5: { // SPEAKING event from other users
+          break;
+        }
+        case 21: { // DAVE Protocol Prepare Transition
+          const tId = msg.d && msg.d.transition_id;
+          console.log(`[${this.username}] DAVE Prepare Transition (id: ${tId}, ver: ${msg.d && msg.d.protocol_version}). Acknowledging Op 23...`);
+          if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
+            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
+          }
+          break;
+        }
+        case 22: { // DAVE Execute Transition
+          console.log(`[${this.username}] DAVE Execute Transition (id: ${msg.d && msg.d.transition_id})`);
+          break;
+        }
+        case 24: { // DAVE Prepare Epoch
+          const tId = msg.d && msg.d.transition_id;
+          console.log(`[${this.username}] DAVE Prepare Epoch (id: ${tId}, epoch: ${msg.d && msg.d.epoch}). Acknowledging Op 23...`);
+          if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
+            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
+          }
+          break;
+        }
+        case 25: { // DAVE MLS External Sender
+          console.log(`[${this.username}] DAVE MLS External Sender package received`);
           break;
         }
       }
@@ -510,7 +540,8 @@ class NativeVoiceClient {
       }
 
       if (!this.isReady && this._voiceReadyReject) {
-        this._voiceReadyReject(new Error(`Voice connection closed (${e.code})`));
+        const errorDesc = e.code === 4017 ? 'DAVE/E2EE required (4017)' : `Voice connection closed (${e.code})`;
+        this._voiceReadyReject(new Error(errorDesc));
       }
     };
   }
