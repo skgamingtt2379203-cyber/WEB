@@ -1017,7 +1017,13 @@ const server = http.createServer(async (req, res) => {
     req.on('data', d => body += d);
     req.on('end', () => {
       try {
-        const { speaking } = JSON.parse(body || '{}');
+        let speaking = true;
+        try {
+          const parsed = JSON.parse(body || '{}');
+          speaking = typeof parsed.speaking === 'boolean' ? parsed.speaking : true;
+        } catch (e) {
+          speaking = !body.includes('false');
+        }
         micSpeakingActive = !!speaking;
         for (const [, client] of activeClients) {
           if (client.isReady) client._sendSpeaking(micSpeakingActive);
