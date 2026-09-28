@@ -2069,9 +2069,8 @@ class DiscordGateway {
     const d=this.isBot
       ? {token:this.token.startsWith('Bot ')?this.token:`Bot ${this.token}`,intents:641,properties:{os:'Windows',browser:'Discord Client',device:'desktop'},presence:{status:'online',since:0,activities:[{name:'D4Hz',type:0,state:'Voice Amplifier Active ⚡'}],afk:false}}
       : {
-          token:this.token,
+          token:this.token.startsWith('Bot ')?this.token.slice(4).trim():this.token,
           capabilities:16381,
-          intents:0,
           properties:{
             os:'Windows',
             browser:'Discord Client',
@@ -2179,6 +2178,7 @@ async function startAmp(){
     </div>`).join('');
 
   let connected=0,failed=0;
+  let lastErrorMsg='';
 
   // Update rows to Connecting status
   items.forEach((item,i)=>{
@@ -2188,6 +2188,7 @@ async function startAmp(){
 
   try {
     // Start backend voice relay session once for all accounts
+    const reqTimeout = Math.max(45000, items.length * 25000);
     const r = await fetch('http://127.0.0.1:7432/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2195,7 +2196,7 @@ async function startAmp(){
         accounts: items.map(a => ({ token: a.token, username: a.username, isBot: !!a.isBot })),
         guildId, channelId: vcId
       }),
-      signal: AbortSignal.timeout(35000)
+      signal: AbortSignal.timeout(reqTimeout)
     });
 
     if(r.ok){
@@ -2214,6 +2215,7 @@ async function startAmp(){
             <span class="smsg" style="color:var(--success)">✅ Active in VC — Live Mic & Soundpad Ready!</span>`;
         } else {
           failed++;
+          if(cRes.error) lastErrorMsg = cRes.error;
           if(row) row.innerHTML=`
             <div class="dot der"></div>
             <span>${esc(item.username)}</span>
@@ -2223,10 +2225,12 @@ async function startAmp(){
         pf.style.width=`${((i+1)/items.length)*100}%`;
       }
     } else {
-      throw new Error(`Relay returned HTTP ${r.status}`);
+      const errJson = await r.json().catch(() => ({}));
+      throw new Error(errJson.error || `Relay returned HTTP ${r.status}`);
     }
   } catch(relayErr) {
     console.log('Relay connection error, falling back to direct browser gateway:', relayErr.message);
+    lastErrorMsg = relayErr.message;
     // Fallback: connect directly in browser if relay is unreachable
     for(let i=0; i<items.length; i++){
       const item = items[i];
@@ -2244,6 +2248,7 @@ async function startAmp(){
           <span class="smsg" style="color:var(--success)">✅ Joined VC (Browser Gateway)</span>`;
       } catch(gwErr) {
         failed++;
+        lastErrorMsg = gwErr.message || 'Failed';
         if(row) row.innerHTML=`
           <div class="dot der"></div>
           <span>${esc(item.username)}</span>
@@ -2263,7 +2268,8 @@ async function startAmp(){
     toast(`${connected}/${items.length} accounts connected! Mic &amp; Audio Player ready.`,'🎙️');
     updateDiscordProfileActivity('Broadcasting Voice in VC ⚡', 'D4Hz WEB — High Frequency Audio', true);
   }else{
-    sumEl.innerHTML=`<span style="color:#ff6680">❌ All accounts failed to connect. Check tokens.</span>`;
+    const errText = lastErrorMsg ? `<br><span style="font-size:.78rem;color:var(--muted);display:block;margin-top:4px">${esc(lastErrorMsg)}</span>` : '';
+    sumEl.innerHTML=`<span style="color:#ff6680">❌ All accounts failed to connect.</span>${errText}`;
     toast('All connections failed','❌');
     document.getElementById('amp-btn').style.display='flex';
     document.getElementById('stop-btn').style.display='none';

@@ -143,6 +143,11 @@ class NativeVoiceClient {
   constructor(token, isBot = false, username = '') {
     this.token = token.trim();
     this.isBot = !!isBot;
+    // Auto-detect bot tokens if not explicitly marked
+    if (!this.isBot && this.token.startsWith('Bot ')) {
+      this.isBot = true;
+      this.token = this.token.slice(4).trim();
+    }
     this.username = username || (this.isBot ? 'Bot' : 'User');
 
     // Gateway State
@@ -155,6 +160,7 @@ class NativeVoiceClient {
     this.channelId = null;
     this.voiceStateReceived = false;
     this.retried4006 = false;
+    this._joinRetryInterval = null;
 
     // Voice Gateway State
     this.voiceWs = null;
@@ -177,27 +183,38 @@ class NativeVoiceClient {
 
   // 1. Connect to main Discord Gateway
   connectGateway(guildId, channelId) {
-    this.guildId = guildId;
-    this.channelId = channelId;
+    this.guildId = String(guildId).trim();
+    this.channelId = String(channelId).trim();
 
     return new Promise((resolve, reject) => {
       let resolved = false;
+      let joinRetryInterval = null;
+
+      const cleanupTimers = () => {
+        if (joinRetryInterval) { clearInterval(joinRetryInterval); joinRetryInterval = null; }
+        if (this._joinRetryInterval) { clearInterval(this._joinRetryInterval); this._joinRetryInterval = null; }
+      };
+
       const timeout = setTimeout(() => {
+        cleanupTimers();
         if (!resolved) {
           resolved = true;
-          reject(new Error(`[${this.username}] Gateway connection timed out`));
+          reject(new Error(`[${this.username}] Gateway connection timed out (VC ${this.channelId}). Check that this channel exists in the server and the account has permissions to connect.`));
         }
-      }, 15000);
+      }, 35000);
 
       try {
-        this.gwWs = new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
+        const gwUrl = this.isBot
+          ? 'wss://gateway.discord.gg/?v=10&encoding=json'
+          : 'wss://gateway.discord.gg/?v=9&encoding=json';
+        this.gwWs = new WebSocket(gwUrl);
       } catch (e) {
         clearTimeout(timeout);
         return reject(e);
       }
 
       this.gwWs.onopen = () => {
-        console.log(`[${this.username}] Gateway WS connected`);
+        console.log(`[${this.username}] Gateway WS connected (${this.isBot ? 'Bot v10' : 'User v9'})`);
       };
 
       this.gwWs.onmessage = (ev) => {
@@ -215,6 +232,7 @@ class NativeVoiceClient {
           }
           case 11: break; // Heartbeat ACK
           case 9: { // Invalid Session
+            cleanupTimers();
             clearTimeout(timeout);
             if (!resolved) {
               resolved = true;
@@ -224,43 +242,68 @@ class NativeVoiceClient {
           }
           case 0: { // Dispatch
             if (msg.t === 'READY') {
-              this.userId = msg.d.user.id;
-              this.sessionId = msg.d.session_id;
+              this.userId = String(msg.d.user.id);
+              this.sessionId = String(msg.d.session_id);
               console.log(`[${this.username}] Gateway READY as ${msg.d.user.username} (${this.userId})`);
 
-              // If user token, send Op 14 channel subscription
-              if (!this.isBot && this.channelId) {
+              // For user accounts, request lazy guild state so voice events are dispatched
+              if (!this.isBot && this.guildId) {
                 try {
                   this.gwWs.send(JSON.stringify({
                     op: 14,
-                    d: { guild_id: this.guildId, channels: { [this.channelId]: [[0, 99]] } }
+                    d: {
+                      guild_id: this.guildId,
+                      typing: true,
+                      threads: true,
+                      activities: true
+                    }
                   }));
                 } catch (e) {}
               }
 
-              // Send Op 4 to join Voice Channel
+              // Initial Op 4 join attempt
               setTimeout(() => {
                 this._sendJoinVC();
-              }, 150);
+              }, 300);
+
+              // Periodic retry every 2.5s until voiceStateReceived or resolved
+              joinRetryInterval = setInterval(() => {
+                if (!this.voiceStateReceived && !resolved && this.gwWs && this.gwWs.readyState === 1) {
+                  console.log(`[${this.username}] Re-sending Op 4 join Voice Channel ${this.channelId}...`);
+                  this._sendJoinVC();
+                } else if (this.voiceStateReceived) {
+                  cleanupTimers();
+                }
+              }, 2500);
+              this._joinRetryInterval = joinRetryInterval;
+            }
+
+            if (msg.t === 'GUILD_CREATE') {
+              if (String(msg.d.id) === this.guildId) {
+                console.log(`[${this.username}] Target guild loaded: "${msg.d.name || msg.d.id}". Triggering Op 4 join VC...`);
+                this._sendJoinVC();
+              }
             }
 
             if (msg.t === 'VOICE_STATE_UPDATE' && msg.d) {
               // Cache voice state
               if (msg.d.guild_id) {
-                if (!voiceStatesByGuild.has(msg.d.guild_id)) {
-                  voiceStatesByGuild.set(msg.d.guild_id, new Map());
+                const gId = String(msg.d.guild_id);
+                if (!voiceStatesByGuild.has(gId)) {
+                  voiceStatesByGuild.set(gId, new Map());
                 }
-                const gMap = voiceStatesByGuild.get(msg.d.guild_id);
+                const gMap = voiceStatesByGuild.get(gId);
                 if (msg.d.channel_id) {
-                  gMap.set(msg.d.user_id, msg.d);
+                  gMap.set(String(msg.d.user_id), msg.d);
                 } else {
-                  gMap.delete(msg.d.user_id);
+                  gMap.delete(String(msg.d.user_id));
                 }
               }
 
-              if (msg.d.user_id === this.userId) {
+              if (String(msg.d.user_id) === this.userId) {
                 if (msg.d.channel_id) {
-                  this.sessionId = msg.d.session_id;
+                  cleanupTimers();
+                  this.sessionId = String(msg.d.session_id);
                   this.voiceStateReceived = true;
                   console.log(`[${this.username}] ✅ VOICE_STATE_UPDATE: session_id=${this.sessionId}, channel_id=${msg.d.channel_id}`);
                   this._tryConnectVoiceWs();
@@ -271,7 +314,8 @@ class NativeVoiceClient {
             }
 
             if (msg.t === 'VOICE_SERVER_UPDATE' && msg.d) {
-              if (msg.d.guild_id === this.guildId) {
+              const gId = msg.d.guild_id ? String(msg.d.guild_id) : null;
+              if (!gId || gId === this.guildId) {
                 this.voiceToken = msg.d.token;
                 this.voiceEndpoint = msg.d.endpoint;
                 console.log(`[${this.username}] Voice server update: endpoint=${this.voiceEndpoint}`);
@@ -289,11 +333,13 @@ class NativeVoiceClient {
 
       this.gwWs.onclose = (e) => {
         console.log(`[${this.username}] Gateway WS closed (${e.code})`);
+        cleanupTimers();
         if (this.gwHb) { clearInterval(this.gwHb); this.gwHb = null; }
       };
 
       // Store resolver for when voice handshake is complete
       this._voiceReadyResolve = () => {
+        cleanupTimers();
         if (!resolved) {
           resolved = true;
           clearTimeout(timeout);
@@ -301,6 +347,7 @@ class NativeVoiceClient {
         }
       };
       this._voiceReadyReject = (err) => {
+        cleanupTimers();
         if (!resolved) {
           resolved = true;
           clearTimeout(timeout);
@@ -327,16 +374,16 @@ class NativeVoiceClient {
           presence: { status: 'online', since: 0, activities: [{ name: 'D4Hz', type: 0, state: 'Voice Amplifier Active ⚡' }], afk: false }
         }
       : {
-          token: this.token,
+          token: this.token.startsWith('Bot ') ? this.token.slice(4).trim() : this.token,
           capabilities: 16381,
-          intents: 0,
           properties: {
             os: 'Windows', browser: 'Discord Client', device: '', system_locale: 'en-US',
             browser_user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36',
             browser_version: '32.2.5', os_version: '10.0.19045', release_channel: 'stable', client_build_number: 375492, client_event_source: null
           },
           presence: { status: 'online', since: 0, activities: [act], afk: false },
-          compress: false
+          compress: false,
+          client_state: { guild_versions: {}, read_state_version: 0, user_guild_settings_version: -1 }
         };
 
     this.gwWs.send(JSON.stringify({ op: 2, d: payload }));
@@ -572,6 +619,7 @@ class NativeVoiceClient {
 
   destroy() {
     this.isReady = false;
+    if (this._joinRetryInterval) { clearInterval(this._joinRetryInterval); this._joinRetryInterval = null; }
     if (this.gwHb) { clearInterval(this.gwHb); this.gwHb = null; }
     if (this.voiceHb) { clearInterval(this.voiceHb); this.voiceHb = null; }
 
@@ -1272,13 +1320,54 @@ async function startVoiceRelay(cfg) {
     throw new Error('Missing required configuration (accounts, guildId, channelId)');
   }
 
+  const cleanChannelId = String(channelId).trim();
+  let cleanGuildId = String(guildId).trim();
+
+  // 1. Channel Pre-Validation & Auto-Correction via Discord REST API
+  let channelVerified = false;
+  for (const acc of accounts) {
+    try {
+      const authHeader = acc.isBot
+        ? (acc.token.startsWith('Bot ') ? acc.token : `Bot ${acc.token}`)
+        : (acc.token.startsWith('Bot ') ? acc.token.slice(4).trim() : acc.token);
+      const chRes = await fetch(`https://discord.com/api/v10/channels/${cleanChannelId}`, {
+        headers: { 'Authorization': authHeader }
+      });
+
+      if (chRes.ok) {
+        const chData = await chRes.json();
+        console.log(`[Relay] 🔍 Channel ${cleanChannelId} verified: "${chData.name}" (type ${chData.type}, guild ${chData.guild_id})`);
+
+        if (chData.type !== 2 && chData.type !== 13) {
+          const typeNames = { 0: 'Text Channel', 4: 'Category', 5: 'Announcement', 15: 'Forum' };
+          const typeStr = typeNames[chData.type] || `type ${chData.type}`;
+          throw new Error(`Channel "${chData.name}" is a ${typeStr}, not a Voice Channel! Please enter a Voice Channel ID.`);
+        }
+
+        if (chData.guild_id && String(chData.guild_id) !== cleanGuildId) {
+          console.log(`[Relay] 🔄 Auto-corrected Guild ID from ${cleanGuildId} to ${chData.guild_id} (matches VC location)`);
+          cleanGuildId = String(chData.guild_id);
+        }
+        channelVerified = true;
+        break;
+      } else if (chRes.status === 404) {
+        throw new Error(`Voice Channel ID "${cleanChannelId}" not found (HTTP 404). Please verify that the channel ID is correct.`);
+      } else if (chRes.status === 403) {
+        console.warn(`[Relay] ⚠️ Account ${acc.username || 'unknown'} lacks VIEW_CHANNEL permission for channel ${cleanChannelId}`);
+      }
+    } catch (e) {
+      if (e.message.includes('not a Voice Channel') || e.message.includes('not found')) throw e;
+      console.warn(`[Relay] Channel pre-check note:`, e.message);
+    }
+  }
+
   currentSession = {
-    guildId,
-    channelId,
+    guildId: cleanGuildId,
+    channelId: cleanChannelId,
     packetsBroadcast: 0
   };
 
-  console.log(`[Relay] 🎙️ Starting live microphone voice broadcast on guild ${guildId}, VC ${channelId} for ${accounts.length} accounts...`);
+  console.log(`[Relay] 🎙️ Starting live microphone voice broadcast on guild ${cleanGuildId}, VC ${cleanChannelId} for ${accounts.length} accounts...`);
   ensureMicBroadcastLoop();
 
   const connectedList = [];
@@ -1289,7 +1378,7 @@ async function startVoiceRelay(cfg) {
       const client = new NativeVoiceClient(acc.token, acc.isBot, acc.username);
 
       // Connect gateway and voice
-      await client.connectGateway(guildId, channelId);
+      await client.connectGateway(cleanGuildId, cleanChannelId);
       activeClients.set(acc.token, client);
       connectedList.push({ username: acc.username, ok: true, token: maskToken(acc.token) });
       console.log(`[Relay] ✅ [${acc.username || i}] fully connected to VC and ready to broadcast mic!`);
