@@ -11,6 +11,14 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 
+let DAVESession = null;
+try {
+  DAVESession = require('@snazzah/davey').DAVESession;
+  console.log('[Relay] 🔐 DAVE E2EE engine loaded successfully (@snazzah/davey)');
+} catch (e) {
+  console.warn('[Relay] DAVE E2EE package not loaded:', e.message);
+}
+
 const PORT = 7432;
 const activeClients = new Map(); // token -> NativeVoiceClient
 const voiceStatesByGuild = new Map(); // guildId -> Map(userId, voiceState)
@@ -179,6 +187,7 @@ class NativeVoiceClient {
     this.seq = 1;
     this.timestamp = 0;
     this.packetCounter = 0;
+    this.daveSession = null;
   }
 
   // 1. Connect to main Discord Gateway
@@ -439,12 +448,23 @@ class NativeVoiceClient {
     };
 
     this.voiceWs.onmessage = (ev) => {
+      // 1. Binary message from Discord Voice Gateway (Opcodes 25, 27, 28, 29, 30)
+      if (typeof ev.data !== 'string') {
+        const buffer = Buffer.isBuffer(ev.data) ? ev.data : Buffer.from(ev.data);
+        if (buffer.length >= 3) {
+          const seq = buffer.readUInt16BE(0);
+          const op = buffer.readUInt8(2);
+          const payload = buffer.subarray(3);
+          this._handleVoiceBinaryMessage(op, payload, seq);
+        }
+        return;
+      }
+
       let msg;
       try {
-        const text = typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8');
-        msg = JSON.parse(text);
+        msg = JSON.parse(ev.data);
       } catch {
-        return; // binary packet / non-json, skip
+        return;
       }
 
       switch (msg.op) {
@@ -481,8 +501,20 @@ class NativeVoiceClient {
         case 4: { // SESSION_DESCRIPTION
           this.secretKey = Buffer.from(msg.d.secret_key);
           this.voiceMode = msg.d.mode || 'aead_aes256_gcm_rtpsize';
-          const daveVer = msg.d.dave_protocol_version !== undefined ? msg.d.dave_protocol_version : 'none';
+          const daveVer = msg.d.dave_protocol_version !== undefined ? msg.d.dave_protocol_version : 0;
           console.log(`[${this.username}] Voice SESSION_DESCRIPTION: mode=${this.voiceMode}, dave_version=${daveVer}`);
+
+          // Initialize DAVE session and dispatch MLS Key Package (Opcode 26)
+          if (daveVer > 0 && DAVESession) {
+            try {
+              this.daveSession = new DAVESession(daveVer, String(this.userId), String(this.channelId));
+              const keyPackage = this.daveSession.getSerializedKeyPackage();
+              this._sendVoiceBinary(26, keyPackage);
+              console.log(`[${this.username}] 🔑 Initialized DAVE session & sent MLS Key Package (${keyPackage.length} bytes, Op 26)`);
+            } catch (err) {
+              console.error(`[${this.username}] Failed to initialize DAVE session:`, err.message);
+            }
+          }
 
           // Send Op 5 Speaking (1 = Microphone, 4 = Priority)
           this._sendSpeaking(true);
@@ -508,7 +540,13 @@ class NativeVoiceClient {
         }
         case 24: { // DAVE Prepare Epoch
           const tId = msg.d && msg.d.transition_id;
-          console.log(`[${this.username}] DAVE Prepare Epoch (id: ${tId}, epoch: ${msg.d && msg.d.epoch}). Acknowledging Op 23...`);
+          console.log(`[${this.username}] DAVE Prepare Epoch (id: ${tId}, epoch: ${msg.d && msg.d.epoch})...`);
+          if (msg.d && msg.d.epoch === 1 && this.daveSession) {
+            this.daveSession.reinit(msg.d.protocol_version || 1, String(this.userId), String(this.channelId));
+            const kp = this.daveSession.getSerializedKeyPackage();
+            this._sendVoiceBinary(26, kp);
+            console.log(`[${this.username}] 🔑 Sent refreshed DAVE MLS Key Package (${kp.length} bytes)`);
+          }
           if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
             this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
           }
@@ -531,11 +569,24 @@ class NativeVoiceClient {
 
       if (e.code === 4006 && !this.retried4006) {
         this.retried4006 = true;
-        console.log(`[${this.username}] Received 4006 (Session not ready) — retrying fresh voice join in 500ms...`);
+        console.log(`[${this.username}] Received 4006 (Session not ready) — performing clean voice leave/rejoin...`);
         this.voiceWs = null;
         this.voiceToken = null;
         this.voiceStateReceived = false;
-        setTimeout(() => this._sendJoinVC(), 500);
+        if (this.daveSession) {
+          try { this.daveSession.reset(); } catch (err) {}
+          this.daveSession = null;
+        }
+        // Leave VC first on Gateway so Discord dispatches a fresh VOICE_SERVER_UPDATE
+        if (this.gwWs && this.gwWs.readyState === 1 && this.guildId) {
+          try {
+            this.gwWs.send(JSON.stringify({
+              op: 4,
+              d: { guild_id: this.guildId, channel_id: null, self_mute: false, self_deaf: false }
+            }));
+          } catch (err) {}
+        }
+        setTimeout(() => this._sendJoinVC(), 400);
         return;
       }
 
@@ -544,6 +595,64 @@ class NativeVoiceClient {
         this._voiceReadyReject(new Error(errorDesc));
       }
     };
+  }
+
+  _handleVoiceBinaryMessage(op, payload, seq) {
+    if (!this.daveSession) return;
+    try {
+      switch (op) {
+        case 25: { // DaveMlsExternalSender
+          console.log(`[${this.username}] 📥 Received DAVE MLS External Sender (${payload.length} bytes)`);
+          this.daveSession.setExternalSender(payload);
+          break;
+        }
+        case 27: { // DaveMlsProposals
+          console.log(`[${this.username}] 📥 Received DAVE MLS Proposals (${payload.length} bytes)`);
+          const optype = payload.readUInt8(0);
+          const { commit, welcome } = this.daveSession.processProposals(
+            optype,
+            payload.subarray(1),
+            [String(this.userId)]
+          );
+          if (commit) {
+            const commitWelcome = welcome ? Buffer.concat([commit, welcome]) : commit;
+            this._sendVoiceBinary(28, commitWelcome);
+            console.log(`[${this.username}] 📤 Sent DAVE MLS Commit Welcome (Opcode 28)`);
+          }
+          break;
+        }
+        case 29: { // DaveMlsAnnounceCommitTransition
+          console.log(`[${this.username}] 📥 Received DAVE MLS Announce Commit Transition (${payload.length} bytes)`);
+          const { transitionId, success } = this.daveSession.processCommit(payload);
+          if (success && transitionId !== 0 && this.voiceWs && this.voiceWs.readyState === 1) {
+            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
+            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+          }
+          break;
+        }
+        case 30: { // DaveMlsWelcome
+          console.log(`[${this.username}] 📥 Received DAVE MLS Welcome (${payload.length} bytes)`);
+          const { transitionId, success } = this.daveSession.processWelcome(payload);
+          if (success && transitionId !== 0 && this.voiceWs && this.voiceWs.readyState === 1) {
+            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
+            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn(`[${this.username}] DAVE binary handler warning (op ${op}):`, e.message);
+    }
+  }
+
+  _sendVoiceBinary(opcode, payload) {
+    if (!this.voiceWs || this.voiceWs.readyState !== 1) return;
+    try {
+      const msg = Buffer.concat([Buffer.from([opcode]), payload]);
+      this.voiceWs.send(msg);
+    } catch (e) {
+      console.error(`[${this.username}] Error sending voice binary message (op ${opcode}):`, e.message);
+    }
   }
 
   _sendVoiceHeartbeat() {
@@ -618,7 +727,17 @@ class NativeVoiceClient {
     if (!this.udp || !this.secretKey || !this.voicePort || !this.voiceIp) return;
 
     try {
-      // 12-byte RTP header
+      // 1. DAVE end-to-end encryption if active
+      let audioPayload = opusBuffer;
+      if (this.daveSession && this.daveSession.ready) {
+        try {
+          audioPayload = this.daveSession.encryptOpus(opusBuffer);
+        } catch (e) {
+          // fallback to raw opus
+        }
+      }
+
+      // 2. 12-byte RTP header
       const header = Buffer.alloc(12);
       header[0] = 0x80; // Version 2
       header[1] = 0x78; // Payload type 120 (Opus)
@@ -628,13 +747,13 @@ class NativeVoiceClient {
       this.timestamp = (this.timestamp + 960) >>> 0; // 20ms @ 48kHz
       header.writeUInt32BE(this.ssrc >>> 0, 8);
 
-      // AES-256-GCM encryption with 4-byte counter (Little Endian as required by Discord AEAD spec)
+      // 3. Transport encryption (AES-256-GCM with 4-byte counter)
       const nonce = Buffer.alloc(12, 0);
       nonce.writeUInt32LE(this.packetCounter >>> 0, 0);
 
       const cipher = crypto.createCipheriv('aes-256-gcm', this.secretKey, nonce);
       cipher.setAAD(header);
-      const encrypted = Buffer.concat([cipher.update(opusBuffer), cipher.final()]);
+      const encrypted = Buffer.concat([cipher.update(audioPayload), cipher.final()]);
       const authTag = cipher.getAuthTag();
 
       const counterBuf = Buffer.alloc(4);
@@ -653,6 +772,10 @@ class NativeVoiceClient {
     if (this._joinRetryInterval) { clearInterval(this._joinRetryInterval); this._joinRetryInterval = null; }
     if (this.gwHb) { clearInterval(this.gwHb); this.gwHb = null; }
     if (this.voiceHb) { clearInterval(this.voiceHb); this.voiceHb = null; }
+    if (this.daveSession) {
+      try { this.daveSession.reset(); } catch (e) {}
+      this.daveSession = null;
+    }
 
     // Leave VC on Gateway
     if (this.gwWs && this.gwWs.readyState === 1 && this.guildId) {

@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@snazzah/davey": "^0.1.12"
+  }
+}
