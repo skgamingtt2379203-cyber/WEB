@@ -1578,10 +1578,11 @@ function fmtTime(sec) {
 
 let isFxPlaying = false;
 function isAnyAudioActive() {
-  const isPlayingTrack = AUDIO_PLAYER.element && !AUDIO_PLAYER.element.paused && !AUDIO_PLAYER.element.ended;
+  const isPlayingTrack = (AUDIO_PLAYER.element && !AUDIO_PLAYER.element.paused && !AUDIO_PLAYER.element.ended) || AUDIO_PLAYER.isPlaying;
   const isMicLive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
-  const isPadLive = typeof SP !== 'undefined' && SP.sounds && SP.sounds.some(s => s.playing);
-  return !!(isPlayingTrack || isMicLive || isPadLive || isFxPlaying);
+  const isPadLive = typeof SP !== 'undefined' && SP.sounds && SP.sounds.some(s => s.playing || (s.loop && s.source));
+  const isFxLive = typeof isFxPlaying !== 'undefined' && isFxPlaying;
+  return !!(isPlayingTrack || isMicLive || isPadLive || isFxLive);
 }
 
 function initAudioPlayerNodes() {
@@ -1897,10 +1898,7 @@ async function startMicStreamingToRelay() {
 
     MIC.mediaRecorder.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
-      const isMicActive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
-      const isPlayerActive = AUDIO_PLAYER.isPlaying;
-      const isPadActive = typeof SP !== 'undefined' && SP.sounds && SP.sounds.some(s => s.playing);
-      if (!isMicActive && !isPlayerActive && !isPadActive) return;
+      if (!isAnyAudioActive()) return;
 
       if (MIC.ws && MIC.ws.readyState === 1) {
         try {
@@ -2386,33 +2384,6 @@ function togglePadLoop(idx){
   toast(s.name + (s.loop ? ' set to Repeat/Loop 🔁' : ' Repeat disabled'), '🔁');
 }
 
-function broadcastPadSoundToVC(s){
-  if(!s||!s.buffer)return;
-  try{
-    const dest=S.audioCtx.createMediaStreamDestination();
-    const src=S.audioCtx.createBufferSource();
-    src.buffer=s.buffer;
-    src.connect(dest);
-    const rec=new MediaRecorder(dest.stream,{mimeType:'audio/webm;codecs=opus'});
-    const chunks=[];
-    rec.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
-    rec.onstop=()=>{
-      if(chunks.length>0){
-        const blob=new Blob(chunks,{type:'audio/webm'});
-        fetch('http://127.0.0.1:7432/play-sound',{
-          method:'POST',
-          body:blob
-        }).then(r=>r.json()).then(res=>{
-          if(res.ok)toast(`📢 Blasting ${s.name} into Discord VC!`,'⚡');
-        }).catch(()=>{});
-      }
-    };
-    rec.start();
-    src.start();
-    setTimeout(()=>{try{rec.stop();src.stop();}catch(e){}},Math.min((s.buffer.duration*1000)+150,30000));
-  }catch(e){}
-}
-
 async function togglePadSound(idx){
   const s=SP.sounds[idx];if(!s)return;
   if(s.playing){stopPadSound(idx);return;}
@@ -2429,12 +2400,9 @@ async function togglePadSound(idx){
   if(bar&&s.buffer.duration>0){s.barTimer=setInterval(()=>{const pct=Math.min(((S.audioCtx.currentTime-s.startTime)/s.buffer.duration)*100,100);bar.style.width=pct+'%';if(!s.loop&&pct>=100)clearInterval(s.barTimer);},50);}
   
   sendSpeakingState(true);
-  if(S.active && !MIC.activeBroadcasting) {
+  if(!MIC.activeBroadcasting) {
     startMicStreamingToRelay();
   }
-
-  // Stream audio into Discord Voice Channel via Relay fallback
-  broadcastPadSoundToVC(s);
 
   source.onended=()=>{
     if(s.loop) return;

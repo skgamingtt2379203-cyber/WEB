@@ -554,9 +554,12 @@ class NativeVoiceClient {
         }
         case 21: { // DAVE Protocol Prepare Transition
           const tId = msg.d && msg.d.transition_id;
-          console.log(`[${this.username}] DAVE Prepare Transition (id: ${tId}, ver: ${msg.d && msg.d.protocol_version}). Acknowledging Op 23...`);
-          if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
+          console.log(`[${this.username}] DAVE Prepare Transition (id: ${tId}, ver: ${msg.d && msg.d.protocol_version})`);
+          if (tId === 0) {
+            console.log(`[${this.username}] ✅ DAVE Transition 0 executed immediately without Opcode 23`);
+          } else if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
             this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
+            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${tId})`);
           }
           break;
         }
@@ -574,8 +577,9 @@ class NativeVoiceClient {
             this._sendVoiceBinary(26, kp);
             console.log(`[${this.username}] 🔑 Sent refreshed DAVE MLS Key Package (${kp.length} bytes)`);
           }
-          if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
+          if (tId && tId > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
             this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
+            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${tId})`);
           }
           break;
         }
@@ -653,10 +657,20 @@ class NativeVoiceClient {
           if (payload.length >= 2) {
             const transitionId = payload.readUInt16BE(0);
             const commitMessage = payload.subarray(2);
-            this.daveSession.processCommit(commitMessage);
-            if (this.voiceWs && this.voiceWs.readyState === 1) {
-              this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
-              console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+            try {
+              this.daveSession.processCommit(commitMessage);
+              console.log(`[${this.username}] ✅ DAVE MLS Commit processed (transition id: ${transitionId}, session ready: ${this.daveSession.ready})`);
+              if (transitionId > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
+                this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
+                console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+              } else {
+                console.log(`[${this.username}] ✅ DAVE Transition id ${transitionId} applied immediately without Opcode 23`);
+              }
+            } catch (commitErr) {
+              console.error(`[${this.username}] ❌ Failed to process DAVE Commit:`, commitErr.message);
+              if (this.voiceWs && this.voiceWs.readyState === 1) {
+                this.voiceWs.send(JSON.stringify({ op: 31, d: { transition_id: transitionId } }));
+              }
             }
           }
           break;
@@ -666,10 +680,20 @@ class NativeVoiceClient {
           if (payload.length >= 2) {
             const transitionId = payload.readUInt16BE(0);
             const welcomeMessage = payload.subarray(2);
-            this.daveSession.processWelcome(welcomeMessage);
-            if (this.voiceWs && this.voiceWs.readyState === 1) {
-              this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
-              console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+            try {
+              this.daveSession.processWelcome(welcomeMessage);
+              console.log(`[${this.username}] ✅ DAVE MLS Welcome processed (transition id: ${transitionId}, session ready: ${this.daveSession.ready})`);
+              if (transitionId > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
+                this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
+                console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
+              } else {
+                console.log(`[${this.username}] ✅ DAVE Welcome id ${transitionId} applied immediately without Opcode 23`);
+              }
+            } catch (welcErr) {
+              console.error(`[${this.username}] ❌ Failed to process DAVE Welcome:`, welcErr.message);
+              if (this.voiceWs && this.voiceWs.readyState === 1) {
+                this.voiceWs.send(JSON.stringify({ op: 31, d: { transition_id: transitionId } }));
+              }
             }
           }
           break;
@@ -1033,8 +1057,10 @@ function handleIncomingMicAudio(buf) {
         micQueue.push(frame);
       }
     }
-    if (micQueue.length > 5) {
-      micQueue.splice(0, micQueue.length - 3);
+    // Absorb normal browser chunk jitter without dropping any audio frames
+    // Only prune if backlog exceeds 35 frames (700ms) during severe connection lag
+    if (micQueue.length > 35) {
+      micQueue.splice(0, micQueue.length - 20);
     }
   }
 }
