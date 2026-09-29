@@ -1647,11 +1647,12 @@ function fmtTime(sec) {
 }
 
 let isFxPlaying = false;
+let activeFxCount = 0;
 function isAnyAudioActive() {
   const isPlayingTrack = (AUDIO_PLAYER.element && !AUDIO_PLAYER.element.paused && !AUDIO_PLAYER.element.ended) || AUDIO_PLAYER.isPlaying;
   const isMicLive = !MIC.isMuted && (MIC.transmitMode === 'open' || MIC.isPttActive);
   const isPadLive = typeof SP !== 'undefined' && SP.sounds && SP.sounds.some(s => s.playing || (s.loop && s.source));
-  const isFxLive = typeof isFxPlaying !== 'undefined' && isFxPlaying;
+  const isFxLive = activeFxCount > 0 || isFxPlaying;
   return !!(isPlayingTrack || isMicLive || isPadLive || isFxLive);
 }
 
@@ -1680,6 +1681,11 @@ function initAudioPlayerNodes() {
     };
 
     AUDIO_PLAYER.element.onended = () => {
+      if (AUDIO_PLAYER.isLooping) {
+        AUDIO_PLAYER.element.currentTime = 0;
+        AUDIO_PLAYER.element.play().catch(() => {});
+        return;
+      }
       AUDIO_PLAYER.isPlaying = false;
       updateAudioPlayerUi();
       if (!isAnyAudioActive()) sendSpeakingState(false);
@@ -1831,6 +1837,7 @@ function playSoundFx(type) {
   }
   ensureDestNode();
   initAudioPlayerNodes();
+  activeFxCount++;
   isFxPlaying = true;
   const ctx = S.audioCtx;
   const now = ctx.currentTime;
@@ -1853,6 +1860,12 @@ function playSoundFx(type) {
     setTimeout(() => padEl.classList.remove('playing'), 1200);
   }
 
+  function finishFx() {
+    activeFxCount = Math.max(0, activeFxCount - 1);
+    isFxPlaying = activeFxCount > 0;
+    if (!isAnyAudioActive()) sendSpeakingState(false);
+  }
+
   if (type === 'bassdrop') {
     const osc = ctx.createOscillator();
     osc.type = 'sine';
@@ -1865,7 +1878,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 1.5);
-    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 1500);
+    setTimeout(finishFx, 1500);
 
   } else if (type === 'airhorn') {
     const freqs = [466.16, 622.25, 932.33];
@@ -1886,7 +1899,7 @@ function playSoundFx(type) {
       osc.start(now);
       osc.stop(now + dur);
     });
-    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 900);
+    setTimeout(finishFx, 900);
 
   } else if (type === 'laser') {
     const osc = ctx.createOscillator();
@@ -1900,7 +1913,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 0.45);
-    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 500);
+    setTimeout(finishFx, 500);
 
   } else if (type === 'siren') {
     const osc = ctx.createOscillator();
@@ -1917,7 +1930,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 1.35);
-    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 1400);
+    setTimeout(finishFx, 1400);
 
   } else if (type === 'robot') {
     const pitches = [440, 880, 1320, 1760, 880];
@@ -1933,7 +1946,7 @@ function playSoundFx(type) {
       osc.start(now + idx * 0.08);
       osc.stop(now + (idx + 1) * 0.08);
     });
-    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 600);
+    setTimeout(finishFx, 600);
 
   } else if (type === 'death') {
     const osc = ctx.createOscillator();
@@ -1947,7 +1960,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 1.9);
-    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 1900);
+    setTimeout(finishFx, 1900);
   }
 }
 
@@ -1992,7 +2005,7 @@ async function startMicStreamingToRelay() {
       }
     };
 
-    MIC.mediaRecorder.start(20);
+    MIC.mediaRecorder.start(40);
     MIC.activeBroadcasting = true;
     updateMicUiStatus();
     console.log('[Audio] Live media recorder broadcasting to Discord VC');
@@ -3168,7 +3181,7 @@ function renderPadBtn(idx){
   div.className='spad-btn';div.id='spad-btn-'+idx;
   div.onclick=e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='BUTTON')return;togglePadSound(idx);};
   const kh=idx<9?`<span class="spad-key">${idx+1}</span>`:'';
-  const loopStyle = s.loop ? 'border-color:var(--accent);color:var(--accent);background:rgba(255,255,255,0.15)' : '';
+  const loopStyle = s.loop ? 'border-color:#00e676;color:#00e676;background:rgba(0,230,118,0.2)' : '';
   div.innerHTML=`${kh}<div class="spad-ico">&#127925;</div><input class="spad-name-inp" id="spad-name-${idx}" value="${esc(s.name)}" onclick="event.stopPropagation()" onchange="SP.sounds[${idx}].name=this.value" title="Rename"/><div class="spad-dur" id="spad-dur-${idx}">--</div><div class="spad-acts"><button class="ibtn" id="spad-loop-${idx}" style="width:24px;height:24px;font-size:.68rem;${loopStyle}" onclick="event.stopPropagation();togglePadLoop(${idx})" title="Repeat / Loop Sound">&#128257;</button><input type="range" class="spad-vol" min="0" max="200" value="100" onclick="event.stopPropagation()" oninput="setPadVol(${idx},this.value)"/><button class="ibtn" style="width:24px;height:24px;font-size:.68rem" onclick="event.stopPropagation();removePadSound(${idx})">&#128465;</button></div><div class="spad-bar" id="spad-bar-${idx}"></div>`;
   grid.insertBefore(div,addBtn);
   if(S.audioCtx&&s.data)S.audioCtx.decodeAudioData(s.data.slice(0),buf=>{s.buffer=buf;const el=document.getElementById('spad-dur-'+idx);if(el)el.textContent=fmtDur(buf.duration);},()=>{});
@@ -3178,12 +3191,14 @@ function setPadVol(idx,val){const s=SP.sounds[idx];if(!s)return;s.volume=parseFl
 function togglePadLoop(idx){
   const s=SP.sounds[idx];if(!s)return;
   s.loop = !s.loop;
-  if(s.source) s.source.loop = s.loop;
+  if(s.source) {
+    try { s.source.loop = s.loop; } catch(e){}
+  }
   const btn=document.getElementById('spad-loop-'+idx);
   if(btn){
-    btn.style.borderColor = s.loop ? 'var(--accent)' : '';
-    btn.style.color = s.loop ? 'var(--accent)' : '';
-    btn.style.background = s.loop ? 'rgba(255,255,255,0.15)' : '';
+    btn.style.borderColor = s.loop ? '#00e676' : '';
+    btn.style.color = s.loop ? '#00e676' : '';
+    btn.style.background = s.loop ? 'rgba(0,230,118,0.2)' : '';
   }
   toast(s.name + (s.loop ? ' set to Repeat/Loop 🔁' : ' Repeat disabled'), '🔁');
 }
@@ -3198,31 +3213,51 @@ async function togglePadSound(idx){
   if(!s.buffer){try{s.buffer=await new Promise((res,rej)=>S.audioCtx.decodeAudioData(s.data.slice(0),res,rej));}catch(e){toast('Could not decode audio','X');return;}}
   const gainNode=S.audioCtx.createGain();gainNode.gain.value=s.volume*SP.masterVol;
   gainNode.connect(getPadMasterGain());
-  if(MIC.destNode){
-    try{ gainNode.connect(MIC.destNode); }catch(e){}
-  }
-  const source=S.audioCtx.createBufferSource();source.buffer=s.buffer;
-  source.loop = !!s.loop;
-  source.connect(gainNode);
-  s.source=source;s.gainNode=gainNode;s.playing=true;s.startTime=S.audioCtx.currentTime;
+  s.gainNode=gainNode;
+  s.playing=true;
   const btn=document.getElementById('spad-btn-'+idx);if(btn)btn.classList.add('playing');
   const bar=document.getElementById('spad-bar-'+idx);
-  if(bar&&s.buffer.duration>0){s.barTimer=setInterval(()=>{const pct=Math.min(((S.audioCtx.currentTime-s.startTime)/s.buffer.duration)*100,100);bar.style.width=pct+'%';if(!s.loop&&pct>=100)clearInterval(s.barTimer);},50);}
+  if(bar&&s.buffer.duration>0){
+    s.barTimer=setInterval(()=>{
+      const elapsed = s.loop ? ((S.audioCtx.currentTime-s.startTime)%s.buffer.duration) : Math.min(S.audioCtx.currentTime-s.startTime, s.buffer.duration);
+      const pct=(elapsed/s.buffer.duration)*100;
+      bar.style.width=pct+'%';
+      if(!s.loop&&pct>=100)clearInterval(s.barTimer);
+    },50);
+  }
   
   sendSpeakingState(true);
   if(!MIC.activeBroadcasting) {
     startMicStreamingToRelay();
   }
 
-  source.onended=()=>{
-    if(s.loop) return;
-    s.playing=false;s.source=null;s.gainNode=null;
-    if(s.barTimer){clearInterval(s.barTimer);s.barTimer=null;}
-    if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
-    if(btn)btn.classList.remove('playing');
-    if(!isAnyAudioActive()) sendSpeakingState(false);
-  };
-  source.start();toast((s.loop ? '🔁 Repeating: ' : 'Playing: ')+s.name,'&#127925;');
+  function startBufferSource() {
+    if (!s.playing) return;
+    const source=S.audioCtx.createBufferSource();
+    source.buffer=s.buffer;
+    source.loop = !!s.loop;
+    source.connect(gainNode);
+    s.source=source;
+    s.startTime=S.audioCtx.currentTime;
+
+    source.onended=()=>{
+      if(s.loop && s.playing){
+        // Seamlessly continue repeating loop without cutting out
+        startBufferSource();
+        return;
+      }
+      s.playing=false;s.source=null;s.gainNode=null;
+      if(s.barTimer){clearInterval(s.barTimer);s.barTimer=null;}
+      if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
+      if(btn)btn.classList.remove('playing');
+      if(!isAnyAudioActive()) sendSpeakingState(false);
+    };
+
+    source.start();
+  }
+
+  startBufferSource();
+  toast((s.loop ? '🔁 Repeating: ' : 'Playing: ')+s.name,'&#127925;');
 }
 function stopPadSound(idx){
   const s=SP.sounds[idx];if(!s||!s.playing)return;
@@ -3231,6 +3266,7 @@ function stopPadSound(idx){
   if(s.barTimer){clearInterval(s.barTimer);s.barTimer=null;}
   const bar=document.getElementById('spad-bar-'+idx);if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
   const btn=document.getElementById('spad-btn-'+idx);if(btn)btn.classList.remove('playing');
+  if(!isAnyAudioActive()) sendSpeakingState(false);
 }
 function stopAllPadSounds(){SP.sounds.forEach((_,i)=>stopPadSound(i));try{fetch(`${RELAY_BASE}/stop-sound`,{method:'POST'}).catch(()=>{});}catch(e){}toast('All sounds stopped','X');}
 function removePadSound(idx){

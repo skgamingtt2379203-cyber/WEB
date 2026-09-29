@@ -251,6 +251,8 @@ class NativeVoiceClient {
     this.timestamp = 0;
     this.packetCounter = 0;
     this.daveSession = null;
+    this.requiresDave = false;
+    this.retried4006 = false;
   }
 
   // 1. Connect to main Discord Gateway
@@ -597,7 +599,8 @@ class NativeVoiceClient {
         case 8: { // HELLO
           const interval = msg.d.heartbeat_interval;
 
-          console.log(`[${this.username}] Voice HELLO (interval: ${interval}ms). Sending Op 0 Identify (server: ${this.guildId}, user: ${this.userId})...`);
+          const maxDaveVer = this.requiresDave ? 1 : 0;
+          console.log(`[${this.username}] Voice HELLO (interval: ${interval}ms). Sending Op 0 Identify (server: ${this.guildId}, user: ${this.userId}, max_dave: ${maxDaveVer})...`);
           this.voiceWs.send(JSON.stringify({
             op: 0,
             d: {
@@ -607,7 +610,7 @@ class NativeVoiceClient {
               token: this.voiceToken,
               video: false,
               streams: [],
-              max_dave_protocol_version: 1
+              max_dave_protocol_version: maxDaveVer
             }
           }));
 
@@ -630,7 +633,7 @@ class NativeVoiceClient {
           const daveVer = msg.d.dave_protocol_version !== undefined ? msg.d.dave_protocol_version : 0;
           console.log(`[${this.username}] Voice SESSION_DESCRIPTION: mode=${this.voiceMode}, dave_version=${daveVer}`);
 
-          // Initialize DAVE session and dispatch MLS Key Package (Opcode 26)
+          // Initialize DAVE session and dispatch MLS Key Package (Opcode 26) ONLY if daveVer > 0
           if (daveVer > 0 && DAVESession) {
             try {
               this.daveSession = new DAVESession(daveVer, String(this.userId), String(this.channelId));
@@ -640,12 +643,15 @@ class NativeVoiceClient {
             } catch (err) {
               console.error(`[${this.username}] Failed to initialize DAVE session:`, err.message);
             }
+          } else {
+            this.daveSession = null;
           }
 
           // Send Op 5 Speaking (1 = Microphone, 4 = Priority)
           this._sendSpeaking(true);
 
           this.isReady = true;
+          this.retried4006 = false;
           if (this._voiceReadyResolve) this._voiceReadyResolve();
           break;
         }
@@ -698,9 +704,21 @@ class NativeVoiceClient {
       console.log(`[${this.username}] Voice WS closed (${e.code})`);
       if (this.voiceHb) { clearInterval(this.voiceHb); this.voiceHb = null; }
 
-      if (e.code === 4006 && !this.retried4006) {
-        this.retried4006 = true;
-        console.log(`[${this.username}] Received 4006 (Session not ready) — performing clean voice leave/rejoin...`);
+      // If Discord strictly requires DAVE (code 4017), enable DAVE and retry
+      if (e.code === 4017 && !this.requiresDave) {
+        console.log(`[${this.username}] Voice channel enforces DAVE E2EE (4017). Reconnecting with DAVE enabled...`);
+        this.requiresDave = true;
+        this.voiceWs = null;
+        this.voiceToken = null;
+        this.voiceStateReceived = false;
+        setTimeout(() => this._sendJoinVC(), 500);
+        return;
+      }
+
+      // If 4006 happened (Session invalidated), disable DAVE to guarantee stability and clean rejoin
+      if (e.code === 4006) {
+        console.log(`[${this.username}] Received 4006 (Session invalidated) — disabling DAVE and performing clean voice reconnect...`);
+        this.requiresDave = false;
         this.voiceWs = null;
         this.voiceToken = null;
         this.voiceStateReceived = false;
@@ -708,7 +726,6 @@ class NativeVoiceClient {
           try { this.daveSession.reset(); } catch (err) {}
           this.daveSession = null;
         }
-        // Leave VC first on Gateway so Discord dispatches a fresh VOICE_SERVER_UPDATE
         if (this.gwWs && this.gwWs.readyState === 1 && this.guildId) {
           try {
             this.gwWs.send(JSON.stringify({
@@ -717,7 +734,7 @@ class NativeVoiceClient {
             }));
           } catch (err) {}
         }
-        setTimeout(() => this._sendJoinVC(), 400);
+        setTimeout(() => this._sendJoinVC(), 500);
         return;
       }
 
@@ -1028,8 +1045,12 @@ function scheduleNextMicTick() {
   }
 
   if (!hasReadyClient) {
-    micQueue.length = 0;
-    micStreamBuffer = Buffer.alloc(0);
+    // Retain buffered audio across brief reconnects (up to 2 seconds)
+    if (micIdleTicks > 100) {
+      micQueue.length = 0;
+      micStreamBuffer = Buffer.alloc(0);
+    }
+    micIdleTicks++;
     nextBroadcastTime = now + 20;
     micBroadcastTimeout = setTimeout(scheduleNextMicTick, 20);
     return;
@@ -1055,8 +1076,9 @@ function scheduleNextMicTick() {
     }
     if (currentSession) currentSession.packetsBroadcast = (currentSession.packetsBroadcast || 0) + 1;
 
-    // High-precision drift compensation: calculate next dispatch time based on frame duration
-    if (nextBroadcastTime <= 0 || (now - nextBroadcastTime) > 120) {
+    // High-precision pacing with anti-burst protection:
+    // If next target time is in the past (more than 1 frame behind), reset to now so packets are never blasted in 1ms bursts!
+    if (nextBroadcastTime <= 0 || (now - nextBroadcastTime) > frameDurationMs) {
       nextBroadcastTime = now + frameDurationMs;
     } else {
       nextBroadcastTime += frameDurationMs;
@@ -1066,16 +1088,25 @@ function scheduleNextMicTick() {
     micBroadcastTimeout = setTimeout(scheduleNextMicTick, delay);
   } else {
     micIdleTicks++;
-    // After ~240ms of silence, deactivate speaking indicator
-    if (micSpeakingActive && micIdleTicks > 12) {
+    // Maintain speaking state through short pauses!
+    // Only stop speaking indicator after at least 1.5 seconds of continuous silence (75 ticks of 20ms)
+    // This stops Discord from flapping speaking state or resetting its jitter buffer!
+    if (micSpeakingActive && micIdleTicks > 75) {
       micSpeakingActive = false;
+      // Send 5 silence frames to cleanly ramp down Discord jitter buffer
+      const silenceFrame = Buffer.from([0xF8, 0xFF, 0xFE]);
+      for (let s = 0; s < 5; s++) {
+        for (const [, client] of activeClients) {
+          if (client.isReady) client.sendRtpOpus(silenceFrame);
+        }
+      }
       for (const [, client] of activeClients) {
         if (client.isReady) client._sendSpeaking(false);
       }
     }
-    // Check back quickly (10ms) when waiting for new incoming audio frames
-    nextBroadcastTime = now + 10;
-    micBroadcastTimeout = setTimeout(scheduleNextMicTick, 10);
+    // Check back every 20ms for incoming audio frames
+    nextBroadcastTime = now + 20;
+    micBroadcastTimeout = setTimeout(scheduleNextMicTick, 20);
   }
 }
 
@@ -1202,8 +1233,9 @@ function handleIncomingMicAudio(buf) {
   if (!buf || !buf.length) return;
   ensureMicBroadcastLoop();
 
-  // If mic was idle, flush any stale stream residue so new audio starts immediately with 0 delay
-  if (micIdleTicks > 6) {
+  // Only reset stream buffer after true extended silence (> 1.5 seconds)
+  // This ensures incomplete WebM blocks cut across chunk boundaries are NEVER corrupted
+  if (micIdleTicks > 75) {
     micStreamBuffer = Buffer.alloc(0);
     nextBroadcastTime = 0;
   }
@@ -1218,11 +1250,10 @@ function handleIncomingMicAudio(buf) {
         micQueue.push(frame);
       }
     }
-    // Ultra-low latency queue cap:
-    // Keep at most 4 frames (~80-160ms) in buffer to eliminate lag or backlog delay.
-    // If incoming chunks burst ahead, immediately prune older frames so audio remains live and real-time.
-    if (micQueue.length > 4) {
-      micQueue.splice(0, micQueue.length - 3);
+    // High-capacity jitter buffer (up to 200 frames = ~4000ms):
+    // Prevents audio stutter and packet loss when browser/network batches chunks.
+    if (micQueue.length > 200) {
+      micQueue.splice(0, micQueue.length - 100);
     }
   }
 }
