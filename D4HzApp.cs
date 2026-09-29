@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -9,111 +10,391 @@ using System.Windows.Forms;
 
 namespace D4HzDesktop
 {
-    static class Program
+    public class MainForm : Form
     {
-        private static Process _relayProcess;
-        private static Process _browserProcess;
-        private static readonly string AppDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "D4Hz_App");
-        private static readonly string ProfileDir = Path.Combine(AppDataDir, "Profile");
         private const int RelayPort = 7432;
         private static readonly string AppUrl = "http://127.0.0.1:" + RelayPort;
+        private Process _relayProcess;
+        private TextBox _logBox;
+        private Label _statusLbl;
+        private Button _launchBtn;
+        private Button _openBrowserBtn;
+        private Button _stopBtn;
+        private NotifyIcon _trayIcon;
+        private bool _isClosing = false;
 
-        [STAThread]
-        static void Main()
+        public MainForm()
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
+            InitializeComponent();
+        }
 
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            this.Text = "D4Hz WEB — Discord Voice Amplifier & Multi-Account VC Suite";
+        }
+
+        private void InitializeComponent()
+        {
+            this.Text = "D4Hz WEB — Discord Voice Amplifier & Multi-Account VC Suite";
+            this.Size = new Size(760, 560);
+            this.MinimumSize = new Size(680, 480);
+            this.StartPosition = FormStartPosition.CenterScreen;
+            this.BackColor = Color.FromArgb(8, 2, 4);
+            this.ForeColor = Color.White;
+            this.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+
+            // Try load icon
+            string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+            if (File.Exists(iconPath))
+            {
+                try { this.Icon = new Icon(iconPath); } catch { }
+            }
+
+            // Header Panel
+            Panel header = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 84,
+                BackColor = Color.FromArgb(14, 4, 8),
+                Padding = new Padding(16, 12, 16, 12)
+            };
+
+            Label titleLbl = new Label
+            {
+                Text = "⚡ D4Hz VOICE AMPLIFIER",
+                Font = new Font("Segoe UI", 14F, FontStyle.Bold, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(255, 26, 46),
+                AutoSize = true,
+                Location = new Point(14, 12)
+            };
+
+            _statusLbl = new Label
+            {
+                Text = "Initializing Discord Voice Engine & Multi-Account System...",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(180, 180, 180),
+                AutoSize = true,
+                Location = new Point(16, 42)
+            };
+
+            header.Controls.Add(titleLbl);
+            header.Controls.Add(_statusLbl);
+            this.Controls.Add(header);
+
+            // Action Buttons Panel
+            Panel actionsPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 62,
+                BackColor = Color.FromArgb(10, 3, 6),
+                Padding = new Padding(16, 10, 16, 10)
+            };
+
+            _launchBtn = CreateButton("🚀 LAUNCH APP WINDOW", Color.FromArgb(255, 26, 46), 180, 12);
+            _launchBtn.Click += (s, e) => LaunchAppWindow();
+
+            _openBrowserBtn = CreateButton("🌐 OPEN IN BROWSER", Color.FromArgb(25, 40, 70), 160, 202);
+            _openBrowserBtn.Click += (s, e) => OpenDefaultBrowser();
+
+            Button copyUrlBtn = CreateButton("📋 COPY LOCAL URL", Color.FromArgb(30, 30, 35), 140, 372);
+            copyUrlBtn.Click += (s, e) =>
+            {
+                Clipboard.SetText(AppUrl);
+                MessageBox.Show("Copied URL to clipboard:\n" + AppUrl, "D4Hz", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+
+            _stopBtn = CreateButton("⏹ STOP & EXIT", Color.FromArgb(70, 15, 20), 120, 522);
+            _stopBtn.Click += (s, e) => this.Close();
+
+            actionsPanel.Controls.Add(_launchBtn);
+            actionsPanel.Controls.Add(_openBrowserBtn);
+            actionsPanel.Controls.Add(copyUrlBtn);
+            actionsPanel.Controls.Add(_stopBtn);
+            this.Controls.Add(actionsPanel);
+
+            // Log Console Section
+            Panel logPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(16, 10, 16, 16),
+                BackColor = Color.FromArgb(8, 2, 4)
+            };
+
+            Label logTitle = new Label
+            {
+                Text = "📡 LIVE ENGINE & MULTI-ACCOUNT CHAT LOGS:",
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(140, 140, 140),
+                Dock = DockStyle.Top,
+                Height = 22
+            };
+
+            _logBox = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(4, 1, 2),
+                ForeColor = Color.FromArgb(220, 220, 220),
+                Font = new Font("Consolas", 8.5F, FontStyle.Regular, GraphicsUnit.Point),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            logPanel.Controls.Add(_logBox);
+            logPanel.Controls.Add(logTitle);
+            this.Controls.Add(logPanel);
+
+            // System Tray Icon
+            _trayIcon = new NotifyIcon
+            {
+                Text = "D4Hz Voice Amplifier",
+                Visible = true
+            };
+            if (this.Icon != null) _trayIcon.Icon = this.Icon;
+
+            ContextMenu trayMenu = new ContextMenu();
+            trayMenu.MenuItems.Add("Show D4Hz Window", (s, e) => ShowAndRestore());
+            trayMenu.MenuItems.Add("Launch App Window", (s, e) => LaunchAppWindow());
+            trayMenu.MenuItems.Add("-");
+            trayMenu.MenuItems.Add("Stop & Exit", (s, e) => this.Close());
+            _trayIcon.ContextMenu = trayMenu;
+            _trayIcon.DoubleClick += (s, e) => ShowAndRestore();
+
+            this.FormClosing += OnFormClosing;
+            this.Shown += OnFormShown;
+        }
+
+        private Button CreateButton(string text, Color backColor, int width, int left)
+        {
+            Button btn = new Button
+            {
+                Text = text,
+                Width = width,
+                Height = 38,
+                Location = new Point(left, 12),
+                BackColor = backColor,
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold, GraphicsUnit.Point)
+            };
+            btn.FlatAppearance.BorderSize = 1;
+            btn.FlatAppearance.BorderColor = Color.FromArgb(100, 255, 26, 46);
+            return btn;
+        }
+
+        private void AppendLog(string message)
+        {
+            if (string.IsNullOrEmpty(message) || _isClosing) return;
             try
             {
-                if (!Directory.Exists(ProfileDir))
+                if (this.InvokeRequired)
                 {
-                    Directory.CreateDirectory(ProfileDir);
+                    this.BeginInvoke((MethodInvoker)(() => AppendLog(message)));
+                    return;
                 }
+                _logBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
+            }
+            catch { }
+        }
 
-                // 1. Ensure relay is running or start it
-                bool relayAlreadyRunning = IsPortInUse(RelayPort);
-                if (!relayAlreadyRunning)
+        private void OnFormShown(object sender, EventArgs e)
+        {
+            AppendLog("Starting D4Hz Voice Amplifier Desktop Edition...");
+            new Thread(StartEngineAsync) { IsBackground = true }.Start();
+        }
+
+        private void StartEngineAsync()
+        {
+            try
+            {
+                bool portInUse = IsPortInUse(RelayPort);
+                if (portInUse)
+                {
+                    AppendLog("Port 7432 is already active with an existing instance.");
+                }
+                else
                 {
                     string nodePath = FindOrGetNode();
                     if (string.IsNullOrEmpty(nodePath))
                     {
-                        MessageBox.Show(
-                            "D4Hz requires the Node.js runtime to execute the high-frequency Discord voice relay.\n\nPlease install Node.js from https://nodejs.org or place node.exe in the same folder as D4Hz.exe.",
-                            "D4Hz Voice Amplifier - Node.js Required",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Warning);
+                        AppendLog("ERROR: Node.js runtime not found!");
+                        this.Invoke((MethodInvoker)(() =>
+                        {
+                            _statusLbl.Text = "❌ Node.js runtime not found. Please install Node.js from https://nodejs.org";
+                            _statusLbl.ForeColor = Color.FromArgb(255, 100, 100);
+                        }));
                         return;
                     }
+
+                    AppendLog("Found Node runtime: " + nodePath);
 
                     string relayScript = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "relay.js");
                     if (!File.Exists(relayScript))
                     {
-                        // Check parent or working directory
-                        string fallback = Path.Combine(Directory.GetCurrentDirectory(), "relay.js");
-                        if (File.Exists(fallback))
-                        {
-                            relayScript = fallback;
-                        }
-                        else
-                        {
-                            MessageBox.Show(
-                                "Could not find 'relay.js' in the application directory:\n" + relayScript,
-                                "D4Hz - File Missing",
-                                MessageBoxButtons.OK,
-                                MessageBoxIcon.Error);
-                            return;
-                        }
+                        relayScript = Path.Combine(Directory.GetCurrentDirectory(), "relay.js");
                     }
 
-                    StartRelay(nodePath, relayScript);
-                }
-
-                // Wait briefly for relay to initialize
-                WaitForRelayReady(RelayPort, 4000);
-
-                // 2. Locate Chromium browser (Edge, Chrome, Brave)
-                string browserPath = FindBrowser();
-                if (string.IsNullOrEmpty(browserPath))
-                {
-                    // Fallback to default browser
-                    Process.Start(new ProcessStartInfo
+                    if (!File.Exists(relayScript))
                     {
-                        FileName = AppUrl,
-                        UseShellExecute = true
-                    });
-                    return;
+                        AppendLog("ERROR: relay.js not found in " + relayScript);
+                        this.Invoke((MethodInvoker)(() =>
+                        {
+                            _statusLbl.Text = "❌ relay.js file is missing from application folder.";
+                            _statusLbl.ForeColor = Color.FromArgb(255, 100, 100);
+                        }));
+                        return;
+                    }
+
+                    AppendLog("Starting Voice Relay Backend from " + relayScript + "...");
+
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = nodePath,
+                        Arguments = "\"" + relayScript + "\"",
+                        WorkingDirectory = Path.GetDirectoryName(relayScript),
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+
+                    _relayProcess = new Process { StartInfo = psi };
+                    _relayProcess.OutputDataReceived += (s, args) =>
+                    {
+                        if (!string.IsNullOrEmpty(args.Data)) AppendLog(args.Data);
+                    };
+                    _relayProcess.ErrorDataReceived += (s, args) =>
+                    {
+                        if (!string.IsNullOrEmpty(args.Data)) AppendLog("[RELAY ERR] " + args.Data);
+                    };
+
+                    _relayProcess.Start();
+                    _relayProcess.BeginOutputReadLine();
+                    _relayProcess.BeginErrorReadLine();
                 }
 
-                // 3. Launch dedicated standalone App Mode
-                string arguments = string.Format(
-                    "--app=\"{0}\" --window-size=1380,880 --user-data-dir=\"{1}\" --enable-features=WebAssembly,WebRTC --autoplay-policy=no-user-gesture-required",
-                    AppUrl,
-                    ProfileDir);
-
-                ProcessStartInfo psi = new ProcessStartInfo
+                // Wait for port ready
+                Stopwatch sw = Stopwatch.StartNew();
+                while (sw.ElapsedMilliseconds < 5000)
                 {
-                    FileName = browserPath,
-                    Arguments = arguments,
-                    UseShellExecute = false
-                };
-
-                _browserProcess = Process.Start(psi);
-
-                if (_browserProcess != null)
-                {
-                    _browserProcess.WaitForExit();
+                    if (IsPortInUse(RelayPort)) break;
+                    Thread.Sleep(200);
                 }
 
-                CleanupAndExit();
+                if (IsPortInUse(RelayPort))
+                {
+                    this.Invoke((MethodInvoker)(() =>
+                    {
+                        _statusLbl.Text = "🟢 ONLINE — Voice Relay & VC Chat Active (" + AppUrl + ")";
+                        _statusLbl.ForeColor = Color.FromArgb(0, 230, 118);
+                    }));
+
+                    AppendLog("✅ Voice Relay Backend online on " + AppUrl);
+                    AppendLog("🚀 Automatically launching application interface...");
+
+                    // Auto launch app window
+                    LaunchAppWindow();
+                }
+                else
+                {
+                    this.Invoke((MethodInvoker)(() =>
+                    {
+                        _statusLbl.Text = "⚠️ Relay startup timeout. Click LAUNCH to retry.";
+                        _statusLbl.ForeColor = Color.FromArgb(255, 170, 0);
+                    }));
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    "An error occurred while running D4Hz:\n\n" + ex.Message,
-                    "D4Hz Voice Amplifier",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                AppendLog("EXCEPTION during startup: " + ex.Message);
+            }
+        }
+
+        private void LaunchAppWindow()
+        {
+            try
+            {
+                // Attempt Chromium App Mode (Edge, Chrome, Brave)
+                string browserPath = FindBrowser();
+                if (!string.IsNullOrEmpty(browserPath))
+                {
+                    string args = "--new-window --app=\"" + AppUrl + "\"";
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = browserPath,
+                        Arguments = args,
+                        UseShellExecute = true
+                    };
+                    Process.Start(psi);
+                    AppendLog("Opened app window via " + Path.GetFileName(browserPath) + " in standalone app mode.");
+                    return;
+                }
+
+                OpenDefaultBrowser();
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Launch error: " + ex.Message);
+                OpenDefaultBrowser();
+            }
+        }
+
+        private void OpenDefaultBrowser()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = AppUrl,
+                    UseShellExecute = true
+                });
+                AppendLog("Opened " + AppUrl + " in default web browser.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Browser open error: " + ex.Message);
+            }
+        }
+
+        private void ShowAndRestore()
+        {
+            this.Show();
+            this.WindowState = FormWindowState.Normal;
+            this.BringToFront();
+            this.Activate();
+        }
+
+        private void OnFormClosing(object sender, FormClosingEventArgs e)
+        {
+            _isClosing = true;
+            if (_trayIcon != null)
+            {
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+            }
+
+            AppendLog("Shutting down D4Hz and stopping all VC connections...");
+
+            try
+            {
+                using (WebClient client = new WebClient())
+                {
+                    client.Headers[HttpRequestHeader.ContentType] = "application/json";
+                    client.UploadString(AppUrl + "/stop", "POST", "");
+                }
+            }
+            catch { }
+
+            if (_relayProcess != null && !_relayProcess.HasExited)
+            {
+                try
+                {
+                    _relayProcess.Kill();
+                }
+                catch { }
             }
         }
 
@@ -124,7 +405,7 @@ namespace D4HzDesktop
                 using (TcpClient client = new TcpClient())
                 {
                     IAsyncResult result = client.BeginConnect("127.0.0.1", port, null, null);
-                    bool success = result.AsyncWaitHandle.WaitOne(400);
+                    bool success = result.AsyncWaitHandle.WaitOne(300);
                     if (success)
                     {
                         client.EndConnect(result);
@@ -136,46 +417,14 @@ namespace D4HzDesktop
             return false;
         }
 
-        private static void WaitForRelayReady(int port, int timeoutMs)
-        {
-            Stopwatch sw = Stopwatch.StartNew();
-            while (sw.ElapsedMilliseconds < timeoutMs)
-            {
-                if (IsPortInUse(port)) return;
-                Thread.Sleep(150);
-            }
-        }
-
-        private static void StartRelay(string nodePath, string scriptPath)
-        {
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = nodePath,
-                Arguments = "\"" + scriptPath + "\"",
-                WorkingDirectory = Path.GetDirectoryName(scriptPath),
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-
-            _relayProcess = new Process { StartInfo = psi };
-            _relayProcess.Start();
-
-            // Auto-clean relay if app domain unloads
-            AppDomain.CurrentDomain.ProcessExit += (s, e) => CleanupAndExit();
-        }
-
         private static string FindOrGetNode()
         {
-            // 1. Same folder as exe
             string localNode = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "node.exe");
             if (File.Exists(localNode)) return localNode;
 
-            // 2. Current working directory
             string cwdNode = Path.Combine(Directory.GetCurrentDirectory(), "node.exe");
             if (File.Exists(cwdNode)) return cwdNode;
 
-            // 3. Check specific OpenAI Codex / CUA runtime path
             string userLocal = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string codexDir = Path.Combine(userLocal, @"OpenAI\Codex\runtimes");
             if (Directory.Exists(codexDir))
@@ -188,7 +437,6 @@ namespace D4HzDesktop
                 catch { }
             }
 
-            // 4. Standard Program Files
             string[] standardPaths = new string[]
             {
                 @"C:\Program Files\nodejs\node.exe",
@@ -203,7 +451,6 @@ namespace D4HzDesktop
                 if (File.Exists(p)) return p;
             }
 
-            // 5. Check PATH
             string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
             foreach (string part in pathEnv.Split(';'))
             {
@@ -212,31 +459,6 @@ namespace D4HzDesktop
                 {
                     string candidate = Path.Combine(clean, "node.exe");
                     if (File.Exists(candidate)) return candidate;
-                }
-            }
-
-            // 6. Automatically prompt to download portable node.exe
-            DialogResult dr = MessageBox.Show(
-                "D4Hz requires the Node.js runtime to execute the high-frequency Discord voice amplifier.\n\nWould you like D4Hz to automatically download the official portable node.exe runtime now (~35MB)?",
-                "D4Hz - Download Runtime",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (dr == DialogResult.Yes)
-            {
-                try
-                {
-                    string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "node.exe");
-                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; // Tls12
-                    using (WebClient client = new WebClient())
-                    {
-                        client.DownloadFile("https://nodejs.org/dist/v20.18.0/win-x64/node.exe", target);
-                    }
-                    if (File.Exists(target)) return target;
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Failed to download runtime: " + ex.Message, "D4Hz Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
 
@@ -264,26 +486,12 @@ namespace D4HzDesktop
             return null;
         }
 
-        private static void CleanupAndExit()
+        [STAThread]
+        static void Main()
         {
-            try
-            {
-                // Disconnect accounts gracefully via stop endpoint
-                using (WebClient wc = new WebClient())
-                {
-                    wc.UploadString(AppUrl + "/stop", "POST", "");
-                }
-            }
-            catch { }
-
-            if (_relayProcess != null && !_relayProcess.HasExited)
-            {
-                try
-                {
-                    _relayProcess.Kill();
-                }
-                catch { }
-            }
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new MainForm());
         }
     }
 }
