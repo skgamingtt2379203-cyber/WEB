@@ -13,10 +13,15 @@ const net = require('net');
 
 let DAVESession = null;
 try {
-  DAVESession = require('@snazzah/davey').DAVESession;
-  console.log('[Relay] 🔐 DAVE E2EE engine loaded successfully (@snazzah/davey)');
+  DAVESession = require('@discordjs/voice').DAVESession;
+  console.log('[Relay] 🔐 DAVE E2EE engine loaded successfully (@discordjs/voice)');
 } catch (e) {
-  console.warn('[Relay] DAVE E2EE package not loaded:', e.message);
+  try {
+    DAVESession = require('@snazzah/davey').DAVESession;
+    console.log('[Relay] 🔐 DAVE E2EE engine loaded successfully (@snazzah/davey)');
+  } catch (err) {
+    console.warn('[Relay] DAVE E2EE package not loaded:', err.message);
+  }
 }
 
 // Global exception shielding to prevent daemon crashes from network anomalies
@@ -251,7 +256,7 @@ class NativeVoiceClient {
     this.timestamp = 0;
     this.packetCounter = 0;
     this.daveSession = null;
-    this.requiresDave = false;
+    this.connectedClients = new Set();
     this.retried4006 = false;
   }
 
@@ -599,8 +604,7 @@ class NativeVoiceClient {
         case 8: { // HELLO
           const interval = msg.d.heartbeat_interval;
 
-          const maxDaveVer = this.requiresDave ? 1 : 0;
-          console.log(`[${this.username}] Voice HELLO (interval: ${interval}ms). Sending Op 0 Identify (server: ${this.guildId}, user: ${this.userId}, max_dave: ${maxDaveVer})...`);
+          console.log(`[${this.username}] Voice HELLO (interval: ${interval}ms). Sending Op 0 Identify (server: ${this.guildId}, user: ${this.userId}, max_dave: 1)...`);
           this.voiceWs.send(JSON.stringify({
             op: 0,
             d: {
@@ -610,7 +614,7 @@ class NativeVoiceClient {
               token: this.voiceToken,
               video: false,
               streams: [],
-              max_dave_protocol_version: maxDaveVer
+              max_dave_protocol_version: 1
             }
           }));
 
@@ -633,13 +637,21 @@ class NativeVoiceClient {
           const daveVer = msg.d.dave_protocol_version !== undefined ? msg.d.dave_protocol_version : 0;
           console.log(`[${this.username}] Voice SESSION_DESCRIPTION: mode=${this.voiceMode}, dave_version=${daveVer}`);
 
-          // Initialize DAVE session and dispatch MLS Key Package (Opcode 26) ONLY if daveVer > 0
           if (daveVer > 0 && DAVESession) {
             try {
-              this.daveSession = new DAVESession(daveVer, String(this.userId), String(this.channelId));
-              const keyPackage = this.daveSession.getSerializedKeyPackage();
-              this._sendVoiceBinary(26, keyPackage);
-              console.log(`[${this.username}] 🔑 Initialized DAVE session & sent MLS Key Package (${keyPackage.length} bytes, Op 26)`);
+              this.daveSession = new DAVESession(daveVer, String(this.userId), String(this.channelId), {});
+              this.daveSession.on('debug', m => console.log(`[${this.username} DAVE] ${m}`));
+              this.daveSession.on('keyPackage', kp => {
+                this._sendVoiceBinary(26, kp);
+                console.log(`[${this.username}] 🔑 Sent DAVE MLS Key Package (${kp.length} bytes, Op 26)`);
+              });
+              this.daveSession.on('invalidateTransition', transitionId => {
+                if (this.voiceWs && this.voiceWs.readyState === 1) {
+                  this.voiceWs.send(JSON.stringify({ op: 31, d: { transition_id: transitionId } }));
+                  console.log(`[${this.username}] Sent DAVE Invalid Transition (Opcode 31, id: ${transitionId})`);
+                }
+              });
+              this.daveSession.reinit();
             } catch (err) {
               console.error(`[${this.username}] Failed to initialize DAVE session:`, err.message);
             }
@@ -658,39 +670,36 @@ class NativeVoiceClient {
         case 5: { // SPEAKING event from other users
           break;
         }
-        case 21: { // DAVE Protocol Prepare Transition
+        case 11: { // ClientsConnect
+          if (msg.d && Array.isArray(msg.d.user_ids)) {
+            for (const id of msg.d.user_ids) this.connectedClients.add(String(id));
+          }
+          break;
+        }
+        case 13: { // ClientDisconnect
+          if (msg.d && msg.d.user_id) this.connectedClients.delete(String(msg.d.user_id));
+          break;
+        }
+        case 21: { // DAVE Prepare Transition
           const tId = msg.d && msg.d.transition_id;
-          console.log(`[${this.username}] DAVE Prepare Transition (id: ${tId}, ver: ${msg.d && msg.d.protocol_version})`);
-          if (tId === 0) {
-            console.log(`[${this.username}] ✅ DAVE Transition 0 executed immediately without Opcode 23`);
+          if (this.daveSession) {
+            const sendReady = this.daveSession.prepareTransition(msg.d);
+            if (sendReady && this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
+              this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
+              console.log(`[${this.username}] Sent DAVE Transition Ready (Op 23, id: ${tId})`);
+            }
           } else if (this.voiceWs && this.voiceWs.readyState === 1 && tId != null) {
             this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
-            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${tId})`);
           }
           break;
         }
         case 22: { // DAVE Execute Transition
           const tId = msg.d && msg.d.transition_id;
-          console.log(`[${this.username}] ✅ DAVE Execute Transition (id: ${tId}). Group transition complete! Ready: ${this.daveSession ? this.daveSession.ready : false}`);
+          if (this.daveSession && tId != null) this.daveSession.executeTransition(tId);
           break;
         }
         case 24: { // DAVE Prepare Epoch
-          const tId = msg.d && msg.d.transition_id;
-          console.log(`[${this.username}] DAVE Prepare Epoch (id: ${tId}, epoch: ${msg.d && msg.d.epoch})...`);
-          if (msg.d && msg.d.epoch === 1 && this.daveSession) {
-            this.daveSession.reinit(msg.d.protocol_version || 1, String(this.userId), String(this.channelId));
-            const kp = this.daveSession.getSerializedKeyPackage();
-            this._sendVoiceBinary(26, kp);
-            console.log(`[${this.username}] 🔑 Sent refreshed DAVE MLS Key Package (${kp.length} bytes)`);
-          }
-          if (tId && tId > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
-            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId } }));
-            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${tId})`);
-          }
-          break;
-        }
-        case 25: { // DAVE MLS External Sender
-          console.log(`[${this.username}] DAVE MLS External Sender package received (JSON)`);
+          if (this.daveSession && msg.d) this.daveSession.prepareEpoch(msg.d);
           break;
         }
       }
@@ -704,26 +713,17 @@ class NativeVoiceClient {
       console.log(`[${this.username}] Voice WS closed (${e.code})`);
       if (this.voiceHb) { clearInterval(this.voiceHb); this.voiceHb = null; }
 
-      // If Discord strictly requires DAVE (code 4017), enable DAVE and retry
-      if (e.code === 4017 && !this.requiresDave) {
-        console.log(`[${this.username}] Voice channel enforces DAVE E2EE (4017). Reconnecting with DAVE enabled...`);
-        this.requiresDave = true;
-        this.voiceWs = null;
-        this.voiceToken = null;
-        this.voiceStateReceived = false;
-        setTimeout(() => this._sendJoinVC(), 500);
-        return;
-      }
-
-      // If 4006 happened (Session invalidated), disable DAVE to guarantee stability and clean rejoin
-      if (e.code === 4006) {
-        console.log(`[${this.username}] Received 4006 (Session invalidated) — disabling DAVE and performing clean voice reconnect...`);
-        this.requiresDave = false;
+      if (e.code === 4006 && !this.retried4006) {
+        this.retried4006 = true;
+        console.log(`[${this.username}] Received 4006 — performing clean leave/rejoin to refresh session...`);
         this.voiceWs = null;
         this.voiceToken = null;
         this.voiceStateReceived = false;
         if (this.daveSession) {
-          try { this.daveSession.reset(); } catch (err) {}
+          try {
+            if (typeof this.daveSession.destroy === 'function') this.daveSession.destroy();
+            else if (typeof this.daveSession.reset === 'function') this.daveSession.reset();
+          } catch (err) {}
           this.daveSession = null;
         }
         if (this.gwWs && this.gwWs.readyState === 1 && this.guildId) {
@@ -769,14 +769,8 @@ class NativeVoiceClient {
         }
         case 27: { // DaveMlsProposals
           console.log(`[${this.username}] 📥 Received DAVE MLS Proposals (${payload.length} bytes)`);
-          const optype = payload.readUInt8(0);
-          const proposals = payload.subarray(1);
-          const { commit, welcome } = this.daveSession.processProposals(
-            optype,
-            proposals
-          );
-          if (commit) {
-            const commitWelcome = welcome ? Buffer.concat([commit, welcome]) : commit;
+          const commitWelcome = this.daveSession.processProposals(payload, this.connectedClients);
+          if (commitWelcome) {
             this._sendVoiceBinary(28, commitWelcome);
             console.log(`[${this.username}] 📤 Sent DAVE MLS Commit Welcome (Opcode 28, ${commitWelcome.length} bytes)`);
           }
@@ -784,52 +778,23 @@ class NativeVoiceClient {
         }
         case 29: { // DaveMlsAnnounceCommitTransition
           console.log(`[${this.username}] 📥 Received DAVE MLS Announce Commit Transition (${payload.length} bytes)`);
-          if (payload.length >= 2) {
-            const transitionId = payload.readUInt16BE(0);
-            const commitMessage = payload.subarray(2);
-            try {
-              this.daveSession.processCommit(commitMessage);
-              console.log(`[${this.username}] ✅ DAVE MLS Commit processed (transition id: ${transitionId}, session ready: ${this.daveSession.ready})`);
-              if (transitionId > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
-                this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
-                console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
-              } else {
-                console.log(`[${this.username}] ✅ DAVE Transition id ${transitionId} applied immediately without Opcode 23`);
-              }
-            } catch (commitErr) {
-              console.error(`[${this.username}] ❌ Failed to process DAVE Commit:`, commitErr.message);
-              if (this.voiceWs && this.voiceWs.readyState === 1) {
-                this.voiceWs.send(JSON.stringify({ op: 31, d: { transition_id: transitionId } }));
-              }
-            }
+          const { transitionId: tId29, success: ok29 } = this.daveSession.processCommit(payload);
+          if (ok29 && tId29 > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
+            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId29 } }));
+            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${tId29})`);
           }
           break;
         }
         case 30: { // DaveMlsWelcome
           console.log(`[${this.username}] 📥 Received DAVE MLS Welcome (${payload.length} bytes)`);
-          if (payload.length >= 2) {
-            const transitionId = payload.readUInt16BE(0);
-            const welcomeMessage = payload.subarray(2);
-            try {
-              this.daveSession.processWelcome(welcomeMessage);
-              console.log(`[${this.username}] ✅ DAVE MLS Welcome processed (transition id: ${transitionId}, session ready: ${this.daveSession.ready})`);
-              if (transitionId > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
-                this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: transitionId } }));
-                console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${transitionId})`);
-              } else {
-                console.log(`[${this.username}] ✅ DAVE Welcome id ${transitionId} applied immediately without Opcode 23`);
-              }
-            } catch (welcErr) {
-              console.error(`[${this.username}] ❌ Failed to process DAVE Welcome:`, welcErr.message);
-              if (this.voiceWs && this.voiceWs.readyState === 1) {
-                this.voiceWs.send(JSON.stringify({ op: 31, d: { transition_id: transitionId } }));
-              }
-            }
+          const { transitionId: tId30, success: ok30 } = this.daveSession.processWelcome(payload);
+          if (ok30 && tId30 > 0 && this.voiceWs && this.voiceWs.readyState === 1) {
+            this.voiceWs.send(JSON.stringify({ op: 23, d: { transition_id: tId30 } }));
+            console.log(`[${this.username}] 📤 Sent DAVE Transition Ready (Opcode 23, id: ${tId30})`);
           }
           break;
         }
         default: {
-          console.log(`[${this.username}] 📥 Voice binary opcode ${op} received (${payload.length} bytes, seq: ${seq})`);
           break;
         }
       }
@@ -920,11 +885,11 @@ class NativeVoiceClient {
     if (!this.udp || !this.secretKey || !this.voicePort || !this.voiceIp) return;
 
     try {
-      // 1. DAVE end-to-end encryption if active and ready
+      // 1. DAVE end-to-end encryption (handles silence passthrough and MLS ratchets seamlessly)
       let audioPayload = opusBuffer;
-      if (this.daveSession && this.daveSession.ready) {
+      if (this.daveSession) {
         try {
-          audioPayload = this.daveSession.encryptOpus(opusBuffer);
+          audioPayload = this.daveSession.encrypt(opusBuffer);
         } catch (e) {
           audioPayload = opusBuffer;
         }
@@ -969,7 +934,10 @@ class NativeVoiceClient {
     if (this.gwHb) { clearInterval(this.gwHb); this.gwHb = null; }
     if (this.voiceHb) { clearInterval(this.voiceHb); this.voiceHb = null; }
     if (this.daveSession) {
-      try { this.daveSession.reset(); } catch (e) {}
+      try {
+        if (typeof this.daveSession.destroy === 'function') this.daveSession.destroy();
+        else if (typeof this.daveSession.reset === 'function') this.daveSession.reset();
+      } catch (e) {}
       this.daveSession = null;
     }
 
