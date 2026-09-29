@@ -1810,16 +1810,23 @@ function updateAudioPlayerUi() {
 // 6. Instant Procedural Soundboard FX (Zero external dependencies)
 function playSoundFx(type) {
   if (!S.audioCtx) initAudio();
+  if (S.audioCtx.state === 'suspended') {
+    S.audioCtx.resume().catch(() => {});
+  }
   ensureDestNode();
   initAudioPlayerNodes();
+  isFxPlaying = true;
   const ctx = S.audioCtx;
   const now = ctx.currentTime;
   const fxGain = ctx.createGain();
   fxGain.connect(S.nodes.hpf);
+  if (MIC.destNode) {
+    try { fxGain.connect(MIC.destNode); } catch (e) {}
+  }
   if (AUDIO_PLAYER.monitorGainNode) fxGain.connect(AUDIO_PLAYER.monitorGainNode);
 
   sendSpeakingState(true);
-  if (S.active && !MIC.activeBroadcasting) {
+  if (!MIC.activeBroadcasting) {
     startMicStreamingToRelay();
   }
 
@@ -1842,7 +1849,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 1.5);
-    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 1500);
+    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 1500);
 
   } else if (type === 'airhorn') {
     const freqs = [466.16, 622.25, 932.33];
@@ -1863,7 +1870,7 @@ function playSoundFx(type) {
       osc.start(now);
       osc.stop(now + dur);
     });
-    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 900);
+    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 900);
 
   } else if (type === 'laser') {
     const osc = ctx.createOscillator();
@@ -1877,7 +1884,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 0.45);
-    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 500);
+    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 500);
 
   } else if (type === 'siren') {
     const osc = ctx.createOscillator();
@@ -1894,7 +1901,7 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 1.35);
-    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 1400);
+    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 1400);
 
   } else if (type === 'robot') {
     const pitches = [440, 880, 1320, 1760, 880];
@@ -1910,7 +1917,7 @@ function playSoundFx(type) {
       osc.start(now + idx * 0.08);
       osc.stop(now + (idx + 1) * 0.08);
     });
-    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 600);
+    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 600);
 
   } else if (type === 'death') {
     const osc = ctx.createOscillator();
@@ -1924,13 +1931,13 @@ function playSoundFx(type) {
     osc.connect(fxGain);
     osc.start(now);
     osc.stop(now + 1.9);
-    setTimeout(() => { if (!isAnyAudioActive()) sendSpeakingState(false); }, 1900);
+    setTimeout(() => { isFxPlaying = false; if (!isAnyAudioActive()) sendSpeakingState(false); }, 1900);
   }
 }
 
 async function startMicStreamingToRelay() {
   if (!MIC.stream) {
-    await initMicSystem(false);
+    try { await initMicSystem(false); } catch (e) {}
   }
   ensureDestNode();
   initAudioPlayerNodes();
@@ -3108,14 +3115,14 @@ function getPadMasterGain(){
   if(!SP.masterGain){
     SP.masterGain=S.audioCtx.createGain();
     SP.masterGain.gain.value=SP.masterVol;
-    SP.masterGain.connect(S.audioCtx.destination);
-    ensureDestNode();
-    if(MIC.analyserNode){
-      try{ SP.masterGain.connect(MIC.analyserNode); }catch(e){}
-    }
-    if(MIC.destNode){
-      try{ SP.masterGain.connect(MIC.destNode); }catch(e){}
-    }
+    try { SP.masterGain.connect(S.audioCtx.destination); } catch(e){}
+  }
+  ensureDestNode();
+  if(MIC.analyserNode){
+    try{ SP.masterGain.connect(MIC.analyserNode); }catch(e){}
+  }
+  if(MIC.destNode){
+    try{ SP.masterGain.connect(MIC.destNode); }catch(e){}
   }
   return SP.masterGain;
 }
@@ -3170,8 +3177,13 @@ async function togglePadSound(idx){
   if(s.playing){stopPadSound(idx);return;}
   if(!S.audioCtx)initAudio();
   if(S.audioCtx.state==='suspended')await S.audioCtx.resume();
+  ensureDestNode();
   if(!s.buffer){try{s.buffer=await new Promise((res,rej)=>S.audioCtx.decodeAudioData(s.data.slice(0),res,rej));}catch(e){toast('Could not decode audio','X');return;}}
-  const gainNode=S.audioCtx.createGain();gainNode.gain.value=s.volume*SP.masterVol;gainNode.connect(getPadMasterGain());
+  const gainNode=S.audioCtx.createGain();gainNode.gain.value=s.volume*SP.masterVol;
+  gainNode.connect(getPadMasterGain());
+  if(MIC.destNode){
+    try{ gainNode.connect(MIC.destNode); }catch(e){}
+  }
   const source=S.audioCtx.createBufferSource();source.buffer=s.buffer;
   source.loop = !!s.loop;
   source.connect(gainNode);

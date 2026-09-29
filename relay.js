@@ -864,18 +864,13 @@ class NativeVoiceClient {
     if (!this.udp || !this.secretKey || !this.voicePort || !this.voiceIp) return;
 
     try {
-      // 1. DAVE end-to-end encryption if active
+      // 1. DAVE end-to-end encryption if active and ready
       let audioPayload = opusBuffer;
-      if (this.daveSession) {
-        if (this.daveSession.ready) {
-          try {
-            audioPayload = this.daveSession.encryptOpus(opusBuffer);
-          } catch (e) {
-            return;
-          }
-        } else {
-          // Waiting for MLS group transition to complete
-          return;
+      if (this.daveSession && this.daveSession.ready) {
+        try {
+          audioPayload = this.daveSession.encryptOpus(opusBuffer);
+        } catch (e) {
+          audioPayload = opusBuffer;
         }
       }
 
@@ -889,9 +884,9 @@ class NativeVoiceClient {
       this.timestamp = (this.timestamp + 960) >>> 0; // 20ms @ 48kHz
       header.writeUInt32BE(this.ssrc >>> 0, 8);
 
-      // 3. Transport encryption (AES-256-GCM with 4-byte counter)
+      // 3. Transport encryption (AES-256-GCM with 4-byte big-endian counter)
       const nonce = Buffer.alloc(12, 0);
-      nonce.writeUInt32LE(this.packetCounter >>> 0, 0);
+      nonce.writeUInt32BE(this.packetCounter >>> 0, 0);
 
       const cipher = crypto.createCipheriv('aes-256-gcm', this.secretKey, nonce);
       cipher.setAAD(header);
@@ -899,7 +894,7 @@ class NativeVoiceClient {
       const authTag = cipher.getAuthTag();
 
       const counterBuf = Buffer.alloc(4);
-      counterBuf.writeUInt32LE(this.packetCounter >>> 0, 0);
+      counterBuf.writeUInt32BE(this.packetCounter >>> 0, 0);
       this.packetCounter = (this.packetCounter + 1) >>> 0;
 
       const rtpPacket = Buffer.concat([header, encrypted, authTag, counterBuf]);
@@ -960,7 +955,7 @@ function ensureMicBroadcastLoop() {
     // Only broadcast if at least one client is fully connected and ready
     let hasReadyClient = false;
     for (const [, client] of activeClients) {
-      if (client.isReady && (!client.daveSession || client.daveSession.ready)) {
+      if (client.isReady) {
         hasReadyClient = true;
         break;
       }
