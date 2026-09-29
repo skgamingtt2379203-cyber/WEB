@@ -1373,6 +1373,7 @@ function setMicTransmitMode(mode) {
 
 function toggleMicMute() {
   MIC.isMuted = !MIC.isMuted;
+  if (!MIC.isMuted) flushRelayAudioQueue();
   if (MIC.stream) {
     MIC.stream.getAudioTracks().forEach(t => t.enabled = !MIC.isMuted);
   }
@@ -1397,6 +1398,7 @@ function toggleMicMonitor() {
 
 function startPttSpeaking() {
   if (MIC.transmitMode !== 'ptt' || MIC.isMuted) return;
+  flushRelayAudioQueue();
   MIC.isPttActive = true;
   const btn = document.getElementById('ptt-hold-btn');
   if (btn) {
@@ -1610,6 +1612,18 @@ function sendSpeakingState(isSpeaking) {
   }
 }
 
+function flushRelayAudioQueue() {
+  if (MIC.ws && MIC.ws.readyState === 1) {
+    try {
+      MIC.ws.send(JSON.stringify({ type: 'flush' }));
+    } catch (e) {}
+  } else {
+    fetch(`${RELAY_BASE}/flush-mic`, {
+      method: 'POST'
+    }).catch(() => {});
+  }
+}
+
 // ══════════════════════════════════════════════════════════
 //  AUDIO PLAYER & SOUNDPAD BROADCAST ENGINE
 // ══════════════════════════════════════════════════════════
@@ -1650,6 +1664,7 @@ function initAudioPlayerNodes() {
     AUDIO_PLAYER.element.crossOrigin = 'anonymous';
 
     AUDIO_PLAYER.element.onplay = () => {
+      flushRelayAudioQueue();
       AUDIO_PLAYER.isPlaying = true;
       updateAudioPlayerUi();
       sendSpeakingState(true);
@@ -1809,6 +1824,7 @@ function updateAudioPlayerUi() {
 
 // 6. Instant Procedural Soundboard FX (Zero external dependencies)
 function playSoundFx(type) {
+  flushRelayAudioQueue();
   if (!S.audioCtx) initAudio();
   if (S.audioCtx.state === 'suspended') {
     S.audioCtx.resume().catch(() => {});
@@ -1976,7 +1992,7 @@ async function startMicStreamingToRelay() {
       }
     };
 
-    MIC.mediaRecorder.start(40);
+    MIC.mediaRecorder.start(20);
     MIC.activeBroadcasting = true;
     updateMicUiStatus();
     console.log('[Audio] Live media recorder broadcasting to Discord VC');
@@ -3175,6 +3191,7 @@ function togglePadLoop(idx){
 async function togglePadSound(idx){
   const s=SP.sounds[idx];if(!s)return;
   if(s.playing){stopPadSound(idx);return;}
+  flushRelayAudioQueue();
   if(!S.audioCtx)initAudio();
   if(S.audioCtx.state==='suspended')await S.audioCtx.resume();
   ensureDestNode();

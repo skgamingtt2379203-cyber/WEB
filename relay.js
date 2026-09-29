@@ -167,6 +167,45 @@ function sendIpcActivity(socket, details, state, imageUrl = null) {
 }
 
 // ══════════════════════════════════════════════════════════
+//  OPUS PACKET PARSER (RFC 6716) — PRECISE SAMPLES & DURATION
+// ══════════════════════════════════════════════════════════
+function getOpusSamples(packet) {
+  if (!packet || packet.length === 0) return 960;
+  const toc = packet[0];
+  const config = (toc >> 3) & 0x1F;
+  const countCode = toc & 0x03;
+
+  let frameSizeMs = 20;
+  if (config <= 11) {
+    // SILK-only (configs 0-11): 10, 20, 40, 60 ms
+    const sizes = [10, 20, 40, 60, 10, 20, 40, 60, 10, 20, 40, 60];
+    frameSizeMs = sizes[config];
+  } else if (config <= 15) {
+    // Hybrid (configs 12-15): 10, 20 ms
+    const sizes = [10, 20, 10, 20];
+    frameSizeMs = sizes[config - 12];
+  } else {
+    // CELT-only (configs 16-31): 2.5, 5, 10, 20 ms
+    const sub = config & 0x03;
+    if (sub === 0) frameSizeMs = 2.5;
+    else if (sub === 1) frameSizeMs = 5;
+    else if (sub === 2) frameSizeMs = 10;
+    else if (sub === 3) frameSizeMs = 20;
+  }
+
+  let frameCount = 1;
+  if (countCode === 1 || countCode === 2) {
+    frameCount = 2;
+  } else if (countCode === 3) {
+    frameCount = packet.length > 1 ? (packet[1] & 0x3F) : 1;
+    if (frameCount <= 0) frameCount = 1;
+  }
+
+  const samples = Math.round((frameSizeMs * 48) * frameCount);
+  return samples > 0 ? samples : 960;
+}
+
+// ══════════════════════════════════════════════════════════
 //  NATIVE DISCORD VOICE CLIENT (Zero-dependency Node 24)
 // ══════════════════════════════════════════════════════════
 class NativeVoiceClient {
@@ -875,13 +914,14 @@ class NativeVoiceClient {
       }
 
       // 2. 12-byte RTP header
+      const samples = getOpusSamples(opusBuffer);
       const header = Buffer.alloc(12);
       header[0] = 0x80; // Version 2
       header[1] = 0x78; // Payload type 120 (Opus)
       header.writeUInt16BE(this.seq & 0xFFFF, 2);
       this.seq = (this.seq + 1) & 0xFFFF;
       header.writeUInt32BE(this.timestamp >>> 0, 4);
-      this.timestamp = (this.timestamp + 960) >>> 0; // 20ms @ 48kHz
+      this.timestamp = (this.timestamp + samples) >>> 0; // Synchronized to exact Opus duration
       header.writeUInt32BE(this.ssrc >>> 0, 8);
 
       // 3. Transport encryption (AES-256-GCM with 4-byte big-endian counter)
@@ -944,60 +984,104 @@ function maskToken(token) {
 // ══════════════════════════════════════════════════════════
 const micQueue = [];
 let micStreamBuffer = Buffer.alloc(0);
-let micBroadcastTimer = null;
+let micBroadcastRunning = false;
+let micBroadcastTimeout = null;
 let micSpeakingActive = false;
 let micIdleTicks = 0;
+let nextBroadcastTime = 0;
 let soundpadTimer = null;
 
+function flushMicQueue() {
+  micQueue.length = 0;
+  micStreamBuffer = Buffer.alloc(0);
+  nextBroadcastTime = 0;
+}
+
+function stopMicBroadcastLoop() {
+  micBroadcastRunning = false;
+  if (micBroadcastTimeout) {
+    clearTimeout(micBroadcastTimeout);
+    micBroadcastTimeout = null;
+  }
+  nextBroadcastTime = 0;
+}
+
 function ensureMicBroadcastLoop() {
-  if (micBroadcastTimer) return;
-  micBroadcastTimer = setInterval(() => {
-    // Only broadcast if at least one client is fully connected and ready
-    let hasReadyClient = false;
+  if (micBroadcastRunning) return;
+  micBroadcastRunning = true;
+  nextBroadcastTime = Date.now();
+  scheduleNextMicTick();
+}
+
+function scheduleNextMicTick() {
+  if (!micBroadcastRunning) return;
+
+  const now = Date.now();
+
+  // Only broadcast if at least one client is fully connected and ready
+  let hasReadyClient = false;
+  for (const [, client] of activeClients) {
+    if (client.isReady) {
+      hasReadyClient = true;
+      break;
+    }
+  }
+
+  if (!hasReadyClient) {
+    micQueue.length = 0;
+    micStreamBuffer = Buffer.alloc(0);
+    nextBroadcastTime = now + 20;
+    micBroadcastTimeout = setTimeout(scheduleNextMicTick, 20);
+    return;
+  }
+
+  if (micQueue.length > 0) {
+    if (!micSpeakingActive) {
+      micSpeakingActive = true;
+      for (const [, client] of activeClients) {
+        if (client.isReady) client._sendSpeaking(true);
+      }
+    }
+    micIdleTicks = 0;
+
+    const frame = micQueue.shift();
+    const samples = getOpusSamples(frame);
+    const frameDurationMs = samples / 48; // Exact duration in ms (e.g. 20ms, 40ms, 60ms)
+
     for (const [, client] of activeClients) {
       if (client.isReady) {
-        hasReadyClient = true;
-        break;
+        client.sendRtpOpus(frame);
       }
     }
+    if (currentSession) currentSession.packetsBroadcast = (currentSession.packetsBroadcast || 0) + 1;
 
-    if (!hasReadyClient) {
-      // Discard buffered audio while connecting/transitioning so no stale, delayed audio ever plays
-      if (micQueue.length > 0) micQueue.length = 0;
-      return;
-    }
-
-    if (micQueue.length > 0) {
-      if (!micSpeakingActive) {
-        micSpeakingActive = true;
-        for (const [, client] of activeClients) {
-          if (client.isReady) client._sendSpeaking(true);
-        }
-      }
-      micIdleTicks = 0;
-      // Always transmit exactly 1 frame per 20ms tick for perfectly natural 1.0x real-time voice speed
-      const frame = micQueue.shift();
-      for (const [, client] of activeClients) {
-        if (client.isReady) {
-          client.sendRtpOpus(frame);
-        }
-      }
-      if (currentSession) currentSession.packetsBroadcast = (currentSession.packetsBroadcast || 0) + 1;
+    // High-precision drift compensation: calculate next dispatch time based on frame duration
+    if (nextBroadcastTime <= 0 || (now - nextBroadcastTime) > 120) {
+      nextBroadcastTime = now + frameDurationMs;
     } else {
-      micIdleTicks++;
-      // After ~240ms of silence (12 ticks of 20ms), deactivate speaking indicator
-      if (micSpeakingActive && micIdleTicks > 12) {
-        micSpeakingActive = false;
-        for (const [, client] of activeClients) {
-          if (client.isReady) client._sendSpeaking(false);
-        }
+      nextBroadcastTime += frameDurationMs;
+    }
+
+    const delay = Math.max(1, Math.round(nextBroadcastTime - Date.now()));
+    micBroadcastTimeout = setTimeout(scheduleNextMicTick, delay);
+  } else {
+    micIdleTicks++;
+    // After ~240ms of silence, deactivate speaking indicator
+    if (micSpeakingActive && micIdleTicks > 12) {
+      micSpeakingActive = false;
+      for (const [, client] of activeClients) {
+        if (client.isReady) client._sendSpeaking(false);
       }
     }
-  }, 20);
+    // Check back quickly (10ms) when waiting for new incoming audio frames
+    nextBroadcastTime = now + 10;
+    micBroadcastTimeout = setTimeout(scheduleNextMicTick, 10);
+  }
 }
 
 function stopSoundpad() {
   if (soundpadTimer) {
+    clearTimeout(soundpadTimer);
     clearInterval(soundpadTimer);
     soundpadTimer = null;
   }
@@ -1118,6 +1202,12 @@ function handleIncomingMicAudio(buf) {
   if (!buf || !buf.length) return;
   ensureMicBroadcastLoop();
 
+  // If mic was idle, flush any stale stream residue so new audio starts immediately with 0 delay
+  if (micIdleTicks > 6) {
+    micStreamBuffer = Buffer.alloc(0);
+    nextBroadcastTime = 0;
+  }
+
   const combined = micStreamBuffer.length > 0 ? Buffer.concat([micStreamBuffer, buf]) : buf;
   const { frames, remaining } = extractOpusFromWebMStream(combined);
   micStreamBuffer = remaining;
@@ -1128,10 +1218,11 @@ function handleIncomingMicAudio(buf) {
         micQueue.push(frame);
       }
     }
-    // Absorb normal browser chunk jitter without dropping any audio frames
-    // Only prune if backlog exceeds 35 frames (700ms) during severe connection lag
-    if (micQueue.length > 35) {
-      micQueue.splice(0, micQueue.length - 20);
+    // Ultra-low latency queue cap:
+    // Keep at most 4 frames (~80-160ms) in buffer to eliminate lag or backlog delay.
+    // If incoming chunks burst ahead, immediately prune older frames so audio remains live and real-time.
+    if (micQueue.length > 4) {
+      micQueue.splice(0, micQueue.length - 3);
     }
   }
 }
@@ -1146,7 +1237,9 @@ function playSoundpadOpus(frames) {
   }
 
   let idx = 0;
-  soundpadTimer = setInterval(() => {
+  let targetTime = Date.now();
+
+  function scheduleNextSoundpadFrame() {
     if (idx >= frames.length || activeClients.size === 0) {
       stopSoundpad();
       for (const [, client] of activeClients) {
@@ -1155,14 +1248,29 @@ function playSoundpadOpus(frames) {
       console.log('[Soundpad] Playback finished');
       return;
     }
-    const frame = frames[idx];
+
+    const frame = frames[idx++];
+    const samples = getOpusSamples(frame);
+    const frameMs = samples / 48; // Exact frame duration
+
     for (const [, client] of activeClients) {
       if (client.isReady) {
         client.sendRtpOpus(frame);
       }
     }
-    idx++;
-  }, 20);
+
+    const now = Date.now();
+    if (targetTime <= 0 || (now - targetTime) > 120) {
+      targetTime = now + frameMs;
+    } else {
+      targetTime += frameMs;
+    }
+
+    const delay = Math.max(1, Math.round(targetTime - Date.now()));
+    soundpadTimer = setTimeout(scheduleNextSoundpadFrame, delay);
+  }
+
+  scheduleNextSoundpadFrame();
 }
 
 let lastBrowserHeartbeat = Date.now();
@@ -1492,6 +1600,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /flush-mic — Flush audio queue for instant soundboard/PTT responsiveness
+  if (req.method === 'POST' && (reqUrl.pathname === '/flush-mic' || req.url === '/flush-mic')) {
+    flushMicQueue();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // POST /mic-chunk — Live microphone audio chunk streaming
   if (req.method === 'POST' && (reqUrl.pathname === '/mic-chunk' || req.url === '/mic-chunk')) {
     const chunks = [];
@@ -1725,6 +1841,9 @@ function handleMicWsUpgrade(req, socket, head) {
         try {
           const txt = payload.toString('utf8');
           const data = JSON.parse(txt);
+          if (data.type === 'flush') {
+            flushMicQueue();
+          }
           if (typeof data.speaking === 'boolean') {
             micSpeakingActive = data.speaking;
             for (const [, client] of activeClients) {
@@ -1762,12 +1881,8 @@ server.on('upgrade', (req, socket, head) => {
 // ══════════════════════════════════════════════════════════
 async function stopAllClients() {
   stopSoundpad();
-  if (micBroadcastTimer) {
-    clearInterval(micBroadcastTimer);
-    micBroadcastTimer = null;
-  }
-  micQueue.length = 0;
-  micStreamBuffer = Buffer.alloc(0);
+  stopMicBroadcastLoop();
+  flushMicQueue();
   micSpeakingActive = false;
 
   for (const [, client] of activeClients) {
