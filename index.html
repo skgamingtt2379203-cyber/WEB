@@ -850,7 +850,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
           <span style="font-size:1.1rem">🔒</span> 3. Zero Credential Exfiltration
         </div>
         <div style="font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.45">
-          Tokens are stored exclusively in your browser's local storage and sent only to your local machine (`127.0.0.1:7432`). They are never transmitted to external cloud servers. Tokens are masked in the UI to prevent shoulder-surfing.
+          Tokens are stored exclusively in your browser's local storage and sent only to your local relay (`127.0.0.1:7432` or local LAN). They are never transmitted to external cloud servers. Tokens are masked in the UI to prevent shoulder-surfing.
         </div>
       </div>
 
@@ -887,7 +887,11 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <div class="toast" id="toast"></div>
 
 <script>
-const S={mode:'accounts',accounts:JSON.parse(localStorage.getItem('cb_acc')||'[]'),bots:JSON.parse(localStorage.getItem('cb_bots')||'[]'),guilds:[],server:null,active:false,audioCtx:null,nodes:{}};
+const S={mode:'accounts',accounts:JSON.parse(localStorage.getItem('cb_acc')||'[]'),bots:JSON.parse(localStorage.getItem('cb_bots')||'[]'),guilds:[],server:null,active:false,audioCtx:null,nodes:{},gateways:[]};
+const RELAY_HOST = (window.location && window.location.hostname && window.location.hostname !== '') ? window.location.hostname : '127.0.0.1';
+const RELAY_PORT = '7432';
+const RELAY_BASE = `http://${RELAY_HOST}:${RELAY_PORT}`;
+const RELAY_WS_BASE = `${window.location && window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${RELAY_HOST}:${RELAY_PORT}`;
 function goTo(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -984,7 +988,7 @@ function updateDiscordProfileActivity(stateText, detailsText, startTimer = true)
   }
 
   try {
-    fetch('http://127.0.0.1:7432/update-activity', {
+    fetch(`${RELAY_BASE}/update-activity`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1009,7 +1013,7 @@ function syncDiscordActivityNow() {
 
 function launchDesktopRpc() {
   toast('Connecting to Discord Desktop client (DEATH.gif)...', '🚀');
-  fetch('http://127.0.0.1:7432/update-activity', {
+  fetch(`${RELAY_BASE}/update-activity`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1523,7 +1527,7 @@ function startVuMeterVisualizer() {
 function connectMicWebSocket() {
   if (MIC.ws && (MIC.ws.readyState === 0 || MIC.ws.readyState === 1)) return;
   try {
-    MIC.ws = new WebSocket('ws://127.0.0.1:7432/mic');
+    MIC.ws = new WebSocket(`${RELAY_WS_BASE}/mic`);
     MIC.ws.binaryType = 'arraybuffer';
     MIC.ws.onopen = () => {
       console.log('[MIC] WebSocket streaming connected to backend relay');
@@ -1546,7 +1550,7 @@ function sendSpeakingState(isSpeaking) {
       MIC.ws.send(JSON.stringify({ speaking: isSpeaking }));
     } catch (e) {}
   } else {
-    fetch('http://127.0.0.1:7432/mic-speaking', {
+    fetch(`${RELAY_BASE}/mic-speaking`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ speaking: isSpeaking })
@@ -1906,7 +1910,7 @@ async function startMicStreamingToRelay() {
           MIC.ws.send(buf);
         } catch (err) {}
       } else {
-        fetch('http://127.0.0.1:7432/mic-chunk', {
+        fetch(`${RELAY_BASE}/mic-chunk`, {
           method: 'POST',
           body: e.data
         }).catch(() => {});
@@ -2016,115 +2020,607 @@ function resetSound(){
 
 // ══════════════════════════════════════════════
 //  DISCORD GATEWAY — Real WebSocket connection
+//  Enhanced with Stay-on-VC Protection & Auto-Resume
 // ══════════════════════════════════════════════
 class DiscordGateway {
-  constructor(token, isBot=false, username='') {
-    this.token=token; this.isBot=isBot; this.username=username;
-    this.ws=null; this.hbTimer=null; this.seq=null;
-    this.ready=false; this.userId=null; this.sessionId=null;
+  constructor(token, isBot=false, username='', index=null) {
+    this.token = token.trim();
+    this.isBot = !!isBot;
+    this.username = username || (this.isBot ? 'Bot' : 'User');
+    this.index = index;
+    this.ws = null;
+    this.hbTimer = null;
+    this.seq = null;
+    this.ready = false;
+    this.userId = null;
+    this.sessionId = null;
+    this.guildId = null;
+    this.channelId = null;
+    this.selfMute = false;
+    this.selfDeaf = false;
+    this.lastHbTime = 0;
+    this.lastHbAck = 0;
+    this.hbInterval = 41250;
+    this.reconnectAttempts = 0;
+    this.reconnectTimer = null;
+    this.intentionalDisconnect = false;
   }
 
-  connect(){
-    return new Promise((resolve,reject)=>{
-      try{
-        this.ws=new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
-      }catch(e){reject(new Error('WS failed'));return}
-      const timeout=setTimeout(()=>reject(new Error('Timeout')),20000);
-      this.ws.onmessage=(ev)=>{
-        let msg;try{msg=JSON.parse(ev.data)}catch{return}
-        if(msg.s)this.seq=msg.s;
-        switch(msg.op){
-          case 10: // HELLO — start heartbeat then identify
-            this._startHb(msg.d.heartbeat_interval);
-            this._identify();
+  connect() {
+    return new Promise((resolve, reject) => {
+      if (this.intentionalDisconnect) return reject(new Error('Intentional disconnect'));
+      this._cleanupWsOnly();
+
+      try {
+        const gwUrl = this.isBot
+          ? 'wss://gateway.discord.gg/?v=10&encoding=json'
+          : 'wss://gateway.discord.gg/?v=9&encoding=json';
+        this.ws = new WebSocket(gwUrl);
+      } catch (e) {
+        return reject(new Error('WS failed'));
+      }
+
+      const timeout = setTimeout(() => {
+        if (!this.ready) {
+          try { this.ws.close(); } catch(e) {}
+          reject(new Error('Timeout'));
+        }
+      }, 25000);
+
+      this.ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.s) this.seq = msg.s;
+
+        switch (msg.op) {
+          case 10: { // HELLO — start heartbeat then identify / resume
+            this.hbInterval = msg.d.heartbeat_interval || 41250;
+            this.lastHbTime = Date.now();
+            this.lastHbAck = Date.now();
+            this._startHb(this.hbInterval);
+
+            if (this.sessionId && this.seq != null) {
+              console.log(`[${this.username}] Resuming Discord Gateway session ${this.sessionId}...`);
+              this._resume();
+            } else {
+              this._identify();
+            }
             break;
-          case 11: break; // HEARTBEAT ACK
-          case 0: // DISPATCH
-            if(msg.t==='READY'){
+          }
+          case 11: { // HEARTBEAT ACK
+            this.lastHbAck = Date.now();
+            break;
+          }
+          case 1: { // Heartbeat requested
+            this._sendHb();
+            break;
+          }
+          case 7: { // RECONNECT
+            console.log(`[${this.username}] Gateway requested reconnect (Opcode 7). Reconnecting to stay on VC...`);
+            if (this.ws) {
+              try { this.ws.close(4000); } catch (e) {}
+            }
+            break;
+          }
+          case 9: { // INVALID SESSION
+            console.log(`[${this.username}] Gateway invalid session (Opcode 9, resumable: ${msg.d})`);
+            if (!msg.d) {
+              this.sessionId = null;
+              this.seq = null;
+            }
+            setTimeout(() => {
+              if (this.ws && this.ws.readyState === 1) {
+                if (msg.d && this.sessionId) this._resume();
+                else this._identify();
+              }
+            }, 1500);
+            break;
+          }
+          case 0: { // DISPATCH
+            if (msg.t === 'READY') {
               clearTimeout(timeout);
-              this.userId=msg.d.user.id;
-              this.sessionId=msg.d.session_id;
-              this.ready=true;
+              this.userId = msg.d.user.id;
+              this.sessionId = msg.d.session_id;
+              this.ready = true;
+              this.reconnectAttempts = 0;
+              console.log(`[${this.username}] Gateway READY (${this.userId})`);
+              if (this.guildId && this.channelId) {
+                this.joinVC(this.guildId, this.channelId, this.selfMute, this.selfDeaf);
+              }
+              resolve(this);
+            } else if (msg.t === 'RESUMED') {
+              clearTimeout(timeout);
+              this.ready = true;
+              this.reconnectAttempts = 0;
+              console.log(`[${this.username}] Gateway RESUMED session successfully`);
+              if (this.guildId && this.channelId) {
+                this.joinVC(this.guildId, this.channelId, this.selfMute, this.selfDeaf);
+              }
               resolve(this);
             }
             break;
-          case 9: // INVALID SESSION
-            clearTimeout(timeout);
-            reject(new Error('Invalid token / session'));
-            break;
+          }
         }
       };
-      this.ws.onerror=()=>{clearTimeout(timeout);reject(new Error('Connection error'))};
-      this.ws.onclose=(e)=>{clearTimeout(timeout);if(!this.ready)reject(new Error('Closed: '+e.code));this._cleanup()};
+
+      this.ws.onerror = () => {
+        // Handled in onclose
+      };
+
+      this.ws.onclose = (e) => {
+        clearTimeout(timeout);
+        this._cleanup();
+        if (!this.ready && !this.intentionalDisconnect && this.reconnectAttempts === 0) {
+          reject(new Error('Closed: ' + e.code));
+        }
+        if (!this.intentionalDisconnect && S.active) {
+          this._scheduleReconnect();
+        }
+      };
     });
   }
 
-  _startHb(interval){
-    // Send first heartbeat immediately, then on interval
-    this._sendHb();
-    this.hbTimer=setInterval(()=>this._sendHb(),interval);
-  }
-  _sendHb(){if(this.ws&&this.ws.readyState===1)this.ws.send(JSON.stringify({op:1,d:this.seq}))}
+  _scheduleReconnect() {
+    if (this.intentionalDisconnect || !S.active) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 
-  _identify(){
-    const d=this.isBot
-      ? {token:this.token.startsWith('Bot ')?this.token:`Bot ${this.token}`,intents:641,properties:{os:'Windows',browser:'Discord Client',device:'desktop'},presence:{status:'online',since:0,activities:[{name:'D4Hz',type:0,state:'Voice Amplifier Active ⚡'}],afk:false}}
-      : {
-          token:this.token.startsWith('Bot ')?this.token.slice(4).trim():this.token,
-          capabilities:16381,
-          properties:{
-            os:'Windows',
-            browser:'Discord Client',
-            device:'',
-            system_locale:'en-US',
-            browser_user_agent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36',
-            browser_version:'32.2.5',
-            os_version:'10.0.19045',
-            release_channel:'stable',
-            client_build_number:375492,
-            client_event_source:null
-          },
-          presence:{status:'online',since:0,activities:getD4HzPresenceActivity(),afk:false},
-          compress:false,
-          client_state:{guild_versions:{},read_state_version:0,user_guild_settings_version:-1}
-        };
-    this.ws.send(JSON.stringify({op:2,d}));
-  }
+    this.reconnectAttempts++;
+    const delay = Math.min(1200 * Math.pow(1.5, Math.min(this.reconnectAttempts, 5)), 12000);
+    console.log(`[${this.username}] 🔄 Disconnected from VC. Auto-reconnecting in ${(delay/1000).toFixed(1)}s to stay in VC...`);
 
-  updatePresence(customOpts){
-    if(!this.ws||this.ws.readyState!==1)return;
-    this.ws.send(JSON.stringify({
-      op:3,
-      d:{
-        since:0,
-        activities:getD4HzPresenceActivity(customOpts),
-        status:'online',
-        afk:false
+    if (this.index != null) {
+      const row = document.getElementById(`sr-${this.index}`);
+      if (row) {
+        const smsg = row.querySelector('.smsg');
+        if (smsg) smsg.innerHTML = `<span style="color:#ffb84d">🔄 Reconnecting to VC... (Stay-on-VC Protection)</span>`;
       }
-    }));
+    }
+
+    this.reconnectTimer = setTimeout(async () => {
+      if (this.intentionalDisconnect || !S.active) return;
+      try {
+        await this.connect();
+        if (this.guildId && this.channelId) {
+          this.joinVC(this.guildId, this.channelId, this.selfMute, this.selfDeaf);
+        }
+        if (this.index != null) {
+          const row = document.getElementById(`sr-${this.index}`);
+          if (row) {
+            const smsg = row.querySelector('.smsg');
+            if (smsg) smsg.innerHTML = `<span style="color:var(--success)">✅ Reconnected &amp; Active in VC</span>`;
+          }
+        }
+      } catch (err) {
+        this._scheduleReconnect();
+      }
+    }, delay);
   }
 
-  joinVC(guildId, channelId, selfMute=false, selfDeaf=true){
-    if(!this.ws||this.ws.readyState!==1)return false;
-    this.ws.send(JSON.stringify({op:4,d:{guild_id:guildId,channel_id:channelId,self_mute:selfMute,self_deaf:selfDeaf}}));
-    return true;
+  _startHb(interval) {
+    this._sendHb();
+    if (this.hbTimer) clearInterval(this.hbTimer);
+    this.hbTimer = setInterval(() => this._sendHb(), interval);
   }
 
-  leaveVC(guildId){
-    if(!this.ws||this.ws.readyState!==1)return;
-    this.ws.send(JSON.stringify({op:4,d:{guild_id:guildId,channel_id:null,self_mute:false,self_deaf:false}}));
+  _sendHb() {
+    if (this.ws && this.ws.readyState === 1) {
+      this.lastHbTime = Date.now();
+      try { this.ws.send(JSON.stringify({ op: 1, d: this.seq })); } catch (e) {}
+    }
   }
 
-  disconnect(){
+  _resume() {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    const cleanToken = this.isBot ? (this.token.startsWith('Bot ') ? this.token : `Bot ${this.token}`) : (this.token.startsWith('Bot ') ? this.token.slice(4).trim() : this.token);
+    try {
+      this.ws.send(JSON.stringify({
+        op: 6,
+        d: {
+          token: cleanToken,
+          session_id: this.sessionId,
+          seq: this.seq
+        }
+      }));
+    } catch(e) {}
+  }
+
+  _identify() {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    const d = this.isBot
+      ? {
+          token: this.token.startsWith('Bot ') ? this.token : `Bot ${this.token}`,
+          intents: 641,
+          properties: { os: 'Windows', browser: 'Discord Client', device: 'desktop' },
+          presence: { status: 'online', since: 0, activities: [{ name: 'D4Hz', type: 0, state: 'Voice Amplifier Active ⚡' }], afk: false }
+        }
+      : {
+          token: this.token.startsWith('Bot ') ? this.token.slice(4).trim() : this.token,
+          capabilities: 16381,
+          properties: {
+            os: 'Windows',
+            browser: 'Discord Client',
+            device: '',
+            system_locale: 'en-US',
+            browser_user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36',
+            browser_version: '32.2.5',
+            os_version: '10.0.19045',
+            release_channel: 'stable',
+            client_build_number: 375492,
+            client_event_source: null
+          },
+          presence: { status: 'online', since: 0, activities: getD4HzPresenceActivity(), afk: false },
+          compress: false,
+          client_state: { guild_versions: {}, read_state_version: 0, user_guild_settings_version: -1 }
+        };
+    try { this.ws.send(JSON.stringify({ op: 2, d })); } catch(e) {}
+  }
+
+  updatePresence(customOpts) {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    try {
+      this.ws.send(JSON.stringify({
+        op: 3,
+        d: {
+          since: 0,
+          activities: getD4HzPresenceActivity(customOpts),
+          status: 'online',
+          afk: false
+        }
+      }));
+    } catch (e) {}
+  }
+
+  joinVC(guildId, channelId, selfMute=false, selfDeaf=false) {
+    this.guildId = guildId;
+    this.channelId = channelId;
+    this.selfMute = selfMute;
+    this.selfDeaf = selfDeaf;
+    if (!this.ws || this.ws.readyState !== 1) return false;
+    try {
+      this.ws.send(JSON.stringify({
+        op: 4,
+        d: {
+          guild_id: String(guildId),
+          channel_id: channelId ? String(channelId) : null,
+          self_mute: selfMute,
+          self_deaf: selfDeaf
+        }
+      }));
+      return true;
+    } catch(e) {
+      return false;
+    }
+  }
+
+  leaveVC(guildId) {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    try {
+      this.ws.send(JSON.stringify({
+        op: 4,
+        d: {
+          guild_id: String(guildId || this.guildId),
+          channel_id: null,
+          self_mute: false,
+          self_deaf: false
+        }
+      }));
+    } catch(e) {}
+  }
+
+  disconnect() {
+    this.intentionalDisconnect = true;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this._cleanup();
-    if(this.ws){try{this.ws.close(1000)}catch(e){}this.ws=null;}
+    if (this.ws) {
+      try { this.ws.close(1000); } catch(e) {}
+      this.ws = null;
+    }
   }
 
-  _cleanup(){
-    if(this.hbTimer){clearInterval(this.hbTimer);this.hbTimer=null;}
-    this.ready=false;
+  _cleanupWsOnly() {
+    if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
+    if (this.ws) {
+      try {
+        this.ws.onopen = null;
+        this.ws.onmessage = null;
+        this.ws.onerror = null;
+        this.ws.onclose = null;
+        this.ws.close();
+      } catch(e) {}
+      this.ws = null;
+    }
+    this.ready = false;
+  }
+
+  _cleanup() {
+    if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
+    this.ready = false;
   }
 }
+
+// ══════════════════════════════════════════════════════════
+//  BACKGROUND & SCREEN KEEP-ALIVE ENGINE (MOBILE & PC)
+//  Guarantees accounts stay in VC until the browser is closed
+// ══════════════════════════════════════════════════════════
+const BackgroundKeepalive = {
+  audioEl: null,
+  audioCtx: null,
+  oscNode: null,
+  wakeLock: null,
+  worker: null,
+  fallbackTimer: null,
+  active: false,
+  tickCount: 0,
+
+  start() {
+    if (this.active) return;
+    this.active = true;
+    this.tickCount = 0;
+    this.startAudio();
+    this.startWakeLock();
+    this.startWorker();
+    console.log('[KeepAlive] 🛡️ Stay-on-VC Protection active (Worker + Audio Keep-Alive + WakeLock)');
+  },
+
+  stop() {
+    this.active = false;
+    this.stopAudio();
+    this.stopWakeLock();
+    this.stopWorker();
+    console.log('[KeepAlive] Stay-on-VC Protection stopped');
+  },
+
+  startAudio() {
+    // 1. Silent HTML5 audio element playing looping inaudible WAV
+    // In iOS Safari, Android Chrome, and PC Chromium, playing media
+    // grants background execution immunity and prevents tab discarding.
+    try {
+      if (!this.audioEl) {
+        this.audioEl = document.createElement('audio');
+        this.audioEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+        this.audioEl.loop = true;
+        this.audioEl.volume = 0.01;
+        this.audioEl.setAttribute('playsinline', '');
+        this.audioEl.setAttribute('webkit-playsinline', '');
+        this.audioEl.id = 'd4hz-keepalive-media';
+        document.body.appendChild(this.audioEl);
+      }
+      this.audioEl.play().catch(() => {});
+    } catch (e) {}
+
+    // 2. Web Audio API silent oscillator
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        if (!this.audioCtx || this.audioCtx.state === 'closed') {
+          this.audioCtx = new AudioContextClass();
+        }
+        if (this.audioCtx.state === 'suspended') {
+          this.audioCtx.resume().catch(() => {});
+        }
+        if (!this.oscNode) {
+          const osc = this.audioCtx.createOscillator();
+          const gain = this.audioCtx.createGain();
+          gain.gain.value = 0.0001; // imperceptible volume
+          osc.connect(gain);
+          gain.connect(this.audioCtx.destination);
+          osc.start();
+          this.oscNode = osc;
+        }
+      }
+    } catch (e) {}
+
+    // 3. MediaSession API metadata for mobile lockscreen persistence
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'D4Hz VC Active',
+          artist: 'Discord Voice Stay-Alive',
+          album: 'Connected to VC'
+        });
+        navigator.mediaSession.setActionHandler('play', () => {
+          if (this.audioEl) this.audioEl.play().catch(() => {});
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          if (this.audioEl) this.audioEl.play().catch(() => {});
+        });
+      } catch (e) {}
+    }
+  },
+
+  stopAudio() {
+    try {
+      if (this.oscNode) {
+        this.oscNode.stop();
+        this.oscNode.disconnect();
+        this.oscNode = null;
+      }
+      if (this.audioCtx && this.audioCtx.state !== 'closed') {
+        this.audioCtx.close().catch(() => {});
+        this.audioCtx = null;
+      }
+      if (this.audioEl) {
+        this.audioEl.pause();
+        this.audioEl.remove();
+        this.audioEl = null;
+      }
+    } catch (e) {}
+  },
+
+  async startWakeLock() {
+    if ('wakeLock' in navigator && navigator.wakeLock.request) {
+      try {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+        this.wakeLock.addEventListener('release', () => {
+          if (this.active && document.visibilityState === 'visible') {
+            this.startWakeLock();
+          }
+        });
+      } catch (e) {}
+    }
+  },
+
+  stopWakeLock() {
+    if (this.wakeLock) {
+      try { this.wakeLock.release(); } catch (e) {}
+      this.wakeLock = null;
+    }
+  },
+
+  startWorker() {
+    if (this.worker) return;
+    try {
+      // Blob Web Worker is immune to window timer throttling in background tabs
+      const workerCode = `
+        let timer = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+            if (!timer) {
+              timer = setInterval(function() {
+                self.postMessage('tick');
+              }, 1000);
+            }
+          } else if (e.data === 'stop') {
+            if (timer) { clearInterval(timer); timer = null; }
+          }
+        };
+      `;
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      this.worker = new Worker(workerUrl);
+      this.worker.onmessage = () => {
+        this.onTick();
+      };
+      this.worker.postMessage('start');
+    } catch (e) {
+      if (!this.fallbackTimer) {
+        this.fallbackTimer = setInterval(() => this.onTick(), 1000);
+      }
+    }
+  },
+
+  stopWorker() {
+    if (this.worker) {
+      try {
+        this.worker.postMessage('stop');
+        this.worker.terminate();
+      } catch (e) {}
+      this.worker = null;
+    }
+    if (this.fallbackTimer) {
+      clearInterval(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
+  },
+
+  onTick() {
+    if (!S.active) return;
+    this.tickCount++;
+
+    // 1. Send keepalive ping to backend relay every 4s
+    if (this.tickCount % 4 === 0) {
+      fetch(`${RELAY_BASE}/browser-heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true
+      }).catch(() => {});
+    }
+
+    // 2. Dispatch heartbeat for direct browser gateways (immune to tab throttling)
+    if (S.gateways && S.gateways.length) {
+      const now = Date.now();
+      S.gateways.forEach(gw => {
+        if (gw && gw.ws && gw.ws.readyState === 1) {
+          if (now - (gw.lastHbTime || 0) >= (gw.hbInterval || 41250)) {
+            gw._sendHb();
+          }
+        } else if (gw && !gw.intentionalDisconnect && S.active) {
+          if (!gw.reconnectTimer && (!gw.ws || gw.ws.readyState === 3)) {
+            gw._scheduleReconnect();
+          }
+        }
+      });
+    }
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+//  BROWSER LIFECYCLE & MULTI-TAB STAY-ALIVE LISTENERS
+// ══════════════════════════════════════════════════════════
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.active) {
+    BackgroundKeepalive.startAudio();
+    BackgroundKeepalive.startWakeLock();
+    fetch(`${RELAY_BASE}/browser-heartbeat`, { method: 'POST', keepalive: true }).catch(() => {});
+    if (S.gateways && S.gateways.length) {
+      S.gateways.forEach(gw => {
+        if (gw && (!gw.ws || gw.ws.readyState !== 1) && !gw.intentionalDisconnect) {
+          gw._scheduleReconnect();
+        }
+      });
+    }
+  }
+});
+
+window.addEventListener('online', () => {
+  if (S.active) {
+    fetch(`${RELAY_BASE}/browser-heartbeat`, { method: 'POST', keepalive: true }).catch(() => {});
+    if (S.gateways && S.gateways.length) {
+      S.gateways.forEach(gw => {
+        if (gw && (!gw.ws || gw.ws.readyState !== 1) && !gw.intentionalDisconnect) {
+          gw._scheduleReconnect();
+        }
+      });
+    }
+  }
+});
+
+// Cleanly disconnect all accounts immediately when the browser is closed
+window.addEventListener('beforeunload', (e) => {
+  if (S.active) {
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${RELAY_BASE}/browser-closed`);
+      } else {
+        fetch(`${RELAY_BASE}/browser-closed`, { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    } catch (err) {}
+
+    if (S.gateways && S.gateways.length) {
+      S.gateways.forEach(gw => {
+        if (gw) {
+          try { gw.leaveVC(S.server ? S.server.id : gw.guildId); } catch(err) {}
+          try { gw.disconnect(); } catch(err) {}
+        }
+      });
+    }
+
+    e.preventDefault();
+    e.returnValue = 'Accounts are currently connected to Discord Voice Channel. Closing this page will disconnect them.';
+    return e.returnValue;
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  if (S.active) {
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${RELAY_BASE}/browser-closed`);
+      } else {
+        fetch(`${RELAY_BASE}/browser-closed`, { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    } catch (err) {}
+
+    if (S.gateways && S.gateways.length) {
+      S.gateways.forEach(gw => {
+        if (gw) {
+          try { gw.leaveVC(S.server ? S.server.id : gw.guildId); } catch(err) {}
+          try { gw.disconnect(); } catch(err) {}
+        }
+      });
+    }
+  }
+});
 
 // ══════════════════════════════════════════════
 //  AMPLIFY — Real Gateway connections
@@ -2190,7 +2686,7 @@ async function startAmp(){
   try {
     // Start backend voice relay session once for all accounts
     const reqTimeout = Math.max(45000, items.length * 25000);
-    const r = await fetch('http://127.0.0.1:7432/start', {
+    const r = await fetch(`${RELAY_BASE}/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2213,7 +2709,7 @@ async function startAmp(){
             <div class="dot don"></div>
             <span>${esc(item.username)}</span>
             <span class="badge badge-b">📢 AMPLIFIER</span>
-            <span class="smsg" style="color:var(--success)">✅ Active in VC — Live Mic & Soundpad Ready!</span>`;
+            <span class="smsg" style="color:var(--success)">✅ Active in VC — Stay-on-VC Protection Ready!</span>`;
         } else {
           failed++;
           if(cRes.error) lastErrorMsg = cRes.error;
@@ -2236,7 +2732,7 @@ async function startAmp(){
     for(let i=0; i<items.length; i++){
       const item = items[i];
       const row = document.getElementById(`sr-${i}`);
-      const gw = new DiscordGateway(item.token, item.isBot, item.username);
+      const gw = new DiscordGateway(item.token, item.isBot, item.username, i);
       try {
         await gw.connect();
         gw.joinVC(guildId, vcId, false, false);
@@ -2263,9 +2759,15 @@ async function startAmp(){
 
   const sumEl=document.getElementById('stat-sum');
   if(connected>0){
+    BackgroundKeepalive.start();
     await startMicStreamingToRelay();
     initAudioPlayerNodes();
-    sumEl.innerHTML=`📢 <strong style="color:var(--red)">${connected}</strong> account${connected!==1?'s':''} active in VC <code style="color:var(--muted);font-size:.75rem">${vcId}</code>! <div style="margin-top:8px;color:var(--success);font-size:.84rem;font-weight:700">🔴 LIVE MIC &amp; AUDIO BROADCAST ACTIVE — Speak in your mic or play audio/soundpad into VC!</div>`;
+    sumEl.innerHTML=`📢 <strong style="color:var(--red)">${connected}</strong> account${connected!==1?'s':''} active in VC <code style="color:var(--muted);font-size:.75rem">${vcId}</code>!
+    <div id="keepalive-status-badge" style="display:flex;align-items:center;gap:8px;background:rgba(0,230,118,0.12);border:1px solid rgba(0,230,118,0.3);border-radius:10px;padding:9px 13px;margin:10px 0;font-size:.78rem;color:#00e676;font-weight:700">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e676;box-shadow:0 0 8px #00e676"></span>
+      <span>🛡️ Stay-on-VC Active: Accounts will remain connected in background &amp; locked screen until this browser is closed.</span>
+    </div>
+    <div style="margin-top:6px;color:var(--success);font-size:.84rem;font-weight:700">🔴 LIVE MIC &amp; AUDIO BROADCAST ACTIVE — Speak in your mic or play audio/soundpad into VC!</div>`;
     toast(`${connected}/${items.length} accounts connected! Mic &amp; Audio Player ready.`,'🎙️');
     updateDiscordProfileActivity('Broadcasting Voice in VC ⚡', 'D4Hz WEB — High Frequency Audio', true);
   }else{
@@ -2275,11 +2777,13 @@ async function startAmp(){
     document.getElementById('amp-btn').style.display='flex';
     document.getElementById('stop-btn').style.display='none';
     S.active=false;
+    BackgroundKeepalive.stop();
   }
 }
 
 function stopAmp(){
   S.active=false;
+  BackgroundKeepalive.stop();
   stopMicStreaming();
   stopAudioPlayback();
   const items=S.mode==='accounts'?S.accounts:S.bots;
@@ -2287,7 +2791,7 @@ function stopAmp(){
 
   // Signal backend relay to stop all voice connections
   try{
-    fetch('http://127.0.0.1:7432/stop',{method:'POST'}).catch(()=>{});
+    fetch(`${RELAY_BASE}/stop`,{method:'POST'}).catch(()=>{});
   }catch(e){}
 
   // Reset Discord Profile Activity & Rich Presence
@@ -2422,7 +2926,7 @@ function stopPadSound(idx){
   const bar=document.getElementById('spad-bar-'+idx);if(bar){bar.style.transition='width .3s';bar.style.width='0%';setTimeout(()=>{if(bar)bar.style.transition='none';},400);}
   const btn=document.getElementById('spad-btn-'+idx);if(btn)btn.classList.remove('playing');
 }
-function stopAllPadSounds(){SP.sounds.forEach((_,i)=>stopPadSound(i));try{fetch('http://127.0.0.1:7432/stop-sound',{method:'POST'}).catch(()=>{});}catch(e){}toast('All sounds stopped','X');}
+function stopAllPadSounds(){SP.sounds.forEach((_,i)=>stopPadSound(i));try{fetch(`${RELAY_BASE}/stop-sound`,{method:'POST'}).catch(()=>{});}catch(e){}toast('All sounds stopped','X');}
 function removePadSound(idx){
   stopPadSound(idx);SP.sounds.splice(idx,1);
   const grid=document.getElementById('spad-grid');

@@ -165,6 +165,8 @@ class NativeVoiceClient {
       this.token = this.token.slice(4).trim();
     }
     this.username = username || (this.isBot ? 'Bot' : 'User');
+    this.destroyed = false;
+    this.reconnecting = false;
 
     // Gateway State
     this.gwWs = null;
@@ -248,12 +250,28 @@ class NativeVoiceClient {
             break;
           }
           case 11: break; // Heartbeat ACK
+          case 7: { // RECONNECT
+            console.log(`[${this.username}] Gateway requested reconnect (Opcode 7). Reconnecting to stay on VC...`);
+            if (this.gwWs) {
+              try { this.gwWs.close(4000); } catch (e) {}
+            }
+            break;
+          }
           case 9: { // Invalid Session
-            cleanupTimers();
-            clearTimeout(timeout);
+            console.log(`[${this.username}] Gateway Invalid Session (Opcode 9, resumable: ${msg.d})`);
+            if (!msg.d) {
+              this.sessionId = null;
+              this.gwSeq = null;
+            }
             if (!resolved) {
+              cleanupTimers();
+              clearTimeout(timeout);
               resolved = true;
               reject(new Error(`[${this.username}] Invalid session / token rejected`));
+            } else if (!this.destroyed) {
+              setTimeout(() => {
+                if (!this.destroyed) this._sendIdentify();
+              }, 1500);
             }
             break;
           }
@@ -352,6 +370,9 @@ class NativeVoiceClient {
         console.log(`[${this.username}] Gateway WS closed (${e.code})`);
         cleanupTimers();
         if (this.gwHb) { clearInterval(this.gwHb); this.gwHb = null; }
+        if (!this.destroyed && activeClients.has(this.token)) {
+          this._scheduleGatewayReconnect();
+        }
       };
 
       // Store resolver for when voice handshake is complete
@@ -432,6 +453,25 @@ class NativeVoiceClient {
         self_deaf: false
       }
     }));
+  }
+
+  _scheduleGatewayReconnect() {
+    if (this.reconnecting || this.destroyed) return;
+    this.reconnecting = true;
+    console.log(`[${this.username}] 🔄 Gateway disconnected. Auto-reconnecting in 2.5s to keep account in VC...`);
+    setTimeout(async () => {
+      this.reconnecting = false;
+      if (this.destroyed) return;
+      try {
+        await this.connectGateway(this.guildId, this.channelId);
+        console.log(`[${this.username}] ✅ Gateway reconnected and re-joined VC ${this.channelId}`);
+      } catch (err) {
+        console.error(`[${this.username}] ⚠️ Gateway reconnect failed: ${err.message}. Retrying in 4s...`);
+        setTimeout(() => {
+          if (!this.destroyed && activeClients.has(this.token)) this._scheduleGatewayReconnect();
+        }, 4000);
+      }
+    }, 2500);
   }
 
   // 2. Connect to Discord Voice Gateway WebSocket
@@ -624,6 +664,19 @@ class NativeVoiceClient {
       if (!this.isReady && this._voiceReadyReject) {
         const errorDesc = e.code === 4017 ? 'DAVE/E2EE required (4017)' : `Voice connection closed (${e.code})`;
         this._voiceReadyReject(new Error(errorDesc));
+      }
+
+      if (this.isReady && !this.destroyed && activeClients.has(this.token) && !this.reconnecting) {
+        console.log(`[${this.username}] Voice connection dropped (${e.code}). Automatically re-joining Voice Channel to stay in VC...`);
+        this.isReady = false;
+        this.voiceWs = null;
+        this.voiceToken = null;
+        this.voiceStateReceived = false;
+        setTimeout(() => {
+          if (!this.destroyed && this.gwWs && this.gwWs.readyState === 1) {
+            this._sendJoinVC();
+          }
+        }, 1200);
       }
     };
   }
@@ -836,6 +889,8 @@ class NativeVoiceClient {
   }
 
   destroy() {
+    this.destroyed = true;
+    this.reconnecting = false;
     this.isReady = false;
     if (this._joinRetryInterval) { clearInterval(this._joinRetryInterval); this._joinRetryInterval = null; }
     if (this.gwHb) { clearInterval(this.gwHb); this.gwHb = null; }
@@ -858,7 +913,7 @@ class NativeVoiceClient {
     if (this.voiceWs) { try { this.voiceWs.close(1000); } catch (e) {} this.voiceWs = null; }
     if (this.gwWs) { try { this.gwWs.close(1000); } catch (e) {} this.gwWs = null; }
     if (this.udp) { try { this.udp.close(); } catch (e) {} this.udp = null; }
-    console.log(`[${this.username}] Client destroyed and disconnected`);
+    console.log(`[${this.username}] Client destroyed and disconnected from VC`);
   }
 }
 
@@ -1092,6 +1147,24 @@ function playSoundpadOpus(frames) {
     }
     idx++;
   }, 20);
+}
+
+let lastBrowserHeartbeat = Date.now();
+let activeBrowserConnections = 0;
+let browserWatchdogTimer = null;
+
+function ensureBrowserWatchdog() {
+  if (browserWatchdogTimer) return;
+  browserWatchdogTimer = setInterval(async () => {
+    if (activeClients.size > 0) {
+      const elapsed = Date.now() - lastBrowserHeartbeat;
+      // If no browser heartbeat for 25s and no active WebSocket connection, the browser was closed
+      if (elapsed > 25000 && activeBrowserConnections <= 0) {
+        console.log(`[Relay] 🛑 Browser closed or inactive (${Math.round(elapsed / 1000)}s since last ping). Automatically disconnecting accounts from VC...`);
+        await stopAllClients();
+      }
+    }
+  }, 4000);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1349,6 +1422,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /browser-heartbeat — Browser sends keepalive to keep accounts in VC until tab is closed
+  if (req.method === 'POST' && (reqUrl.pathname === '/browser-heartbeat' || req.url === '/browser-heartbeat')) {
+    lastBrowserHeartbeat = Date.now();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, active: activeClients.size }));
+    return;
+  }
+
+  // POST /browser-closed — Cleanly disconnect all accounts immediately when browser closes
+  if (req.method === 'POST' && (reqUrl.pathname === '/browser-closed' || req.url === '/browser-closed')) {
+    console.log('[Relay] 🛑 Browser closed signal received from browser. Stopping all voice clients...');
+    await stopAllClients();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // GET /status — Live amplifier & microphone status
   if (req.method === 'GET' && (reqUrl.pathname === '/status' || req.url === '/status')) {
     const clientsList = [];
@@ -1438,6 +1528,8 @@ function handleMicWsUpgrade(req, socket, head) {
 
   socket.write(headers.join('\r\n') + '\r\n\r\n');
   console.log('[Relay] 🎙️ Live Microphone WebSocket stream connected!');
+  activeBrowserConnections++;
+  lastBrowserHeartbeat = Date.now();
 
   let frameBuffer = Buffer.alloc(0);
 
@@ -1506,6 +1598,7 @@ function handleMicWsUpgrade(req, socket, head) {
   });
 
   socket.on('close', () => {
+    activeBrowserConnections = Math.max(0, activeBrowserConnections - 1);
     console.log('[Relay] 🎙️ Live Microphone WebSocket stream disconnected');
   });
 
@@ -1603,6 +1696,9 @@ async function startVoiceRelay(cfg) {
     packetsBroadcast: 0
   };
 
+  lastBrowserHeartbeat = Date.now();
+  ensureBrowserWatchdog();
+
   console.log(`[Relay] 🎙️ Starting live microphone voice broadcast on guild ${cleanGuildId}, VC ${cleanChannelId} for ${accounts.length} accounts...`);
   ensureMicBroadcastLoop();
 
@@ -1647,10 +1743,26 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '0.0.0.0', () => {
+  const os = require('os');
+  const ips = [];
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) ips.push(net.address);
+      }
+    }
+  } catch (e) {}
+
   console.log(`====================================================`);
-  console.log(`🚀 D4Hz WEB Voice Relay Backend active on http://127.0.0.1:${PORT}`);
+  console.log(`🚀 D4Hz WEB Voice Relay Backend active`);
+  console.log(`🖥️ Local PC : http://127.0.0.1:${PORT}`);
+  ips.forEach(ip => {
+    console.log(`📱 Mobile LAN: http://${ip}:${PORT}`);
+  });
   console.log(`⚡ Zero-dependency native Node 24 voice client engine`);
   console.log(`🎙️ Live Microphone Streaming & Multi-Account Broadcast Enabled`);
+  console.log(`🛡️ Stay-on-VC Protection: Accounts stay active until browser is closed`);
   console.log(`====================================================`);
 });
