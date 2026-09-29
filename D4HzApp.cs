@@ -190,12 +190,16 @@ namespace D4HzDesktop
             if (string.IsNullOrEmpty(message) || _isClosing) return;
             try
             {
+                string line = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine;
+                try { File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "d4hz.log"), line); } catch { }
                 if (this.InvokeRequired)
                 {
-                    this.BeginInvoke((MethodInvoker)(() => AppendLog(message)));
+                    this.BeginInvoke((MethodInvoker)(() => {
+                        try { _logBox.AppendText(line); } catch { }
+                    }));
                     return;
                 }
-                _logBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
+                _logBox.AppendText(line);
             }
             catch { }
         }
