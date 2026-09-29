@@ -781,6 +781,48 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
       <div id="stat-sum" style="margin-top:12px;font-size:.85rem;line-height:1.5"></div>
     </div>
 
+    <!-- VOICE CHANNEL TEXT CHAT (MULTI-ACCOUNT) -->
+    <div class="sec" id="vc-chat-sec" style="border-color:rgba(74,158,255,.3);background:linear-gradient(135deg,rgba(7,14,28,.95),rgba(10,20,38,.9))">
+      <div class="slbl" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="display:flex;align-items:center;gap:8px">
+          💬 Voice Channel Text Chat
+          <span class="badge badge-b">MULTI-ACCOUNT</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="pill pill-o" style="font-size:.68rem;padding:4px 10px" onclick="refreshVcChatHistory()">🔄 REFRESH CHAT</button>
+        </div>
+      </div>
+      <div style="font-size:.72rem;color:rgba(255,255,255,.45);margin-bottom:12px;line-height:1.5">
+        Chat directly in the Voice Channel's text chat. Broadcast messages simultaneously across all connected accounts or pick individual accounts.
+      </div>
+
+      <!-- Live Chat Messages Display -->
+      <div id="vc-chat-box" style="height:220px;overflow-y:auto;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:8px;font-size:.82rem">
+        <div style="color:var(--muted);text-align:center;margin:auto;font-size:.75rem">No messages yet. Connect to VC or click Refresh Chat to view live conversation.</div>
+      </div>
+
+      <!-- Sender Account Selector & Mode -->
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Send As:</div>
+        <select class="inp" id="vc-chat-sender" style="width:auto;flex:1;min-width:180px;padding:7px 12px;font-size:.78rem">
+          <option value="all">⚡ ALL Connected Accounts (Simultaneous Broadcast)</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:.74rem;color:rgba(255,255,255,.6);cursor:pointer">
+          <input type="checkbox" id="vc-chat-stagger" checked style="accent-color:var(--red)"/>
+          <span>Anti-Rate-Limit Stagger (250ms)</span>
+        </label>
+      </div>
+
+      <!-- Input Row -->
+      <div style="display:flex;gap:10px">
+        <input type="text" class="inp" id="vc-chat-input" placeholder="Type a message to send in the Voice Channel text chat…" style="flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendVcChatMessage();}"/>
+        <button class="bbtn bbtn-r" id="vc-chat-send-btn" style="margin-bottom:0;padding:0 24px;width:auto;font-size:.85rem;white-space:nowrap" onclick="sendVcChatMessage()">
+          ✉️ SEND CHAT
+        </button>
+      </div>
+      <div id="vc-chat-status" style="margin-top:6px;font-size:.74rem;color:var(--muted);min-height:18px"></div>
+    </div>
+
     <!-- DISCORD POLICY & VOICE CONSENT GATE -->
     <div style="background:rgba(0,0,0,.45);border:1px solid rgba(255,26,46,.28);border-radius:14px;padding:14px 16px;margin-bottom:14px;transition:all .3s" id="voice-consent-box">
       <div style="display:flex;align-items:flex-start;gap:12px">
@@ -899,6 +941,16 @@ function goTo(id){
   if(id==='pg-vc'){
     populateMicDevices();
     initMicSystem(false);
+    renderVcChatSenders();
+    refreshVcChatHistory();
+    if (!vcChatHistoryTimer) {
+      vcChatHistoryTimer = setInterval(() => {
+        const pg = document.getElementById('pg-vc');
+        if (pg && pg.classList.contains('active')) {
+          refreshVcChatHistory();
+        }
+      }, 5000);
+    }
   }
 }
 
@@ -2117,6 +2169,9 @@ class DiscordGateway {
             break;
           }
           case 0: { // DISPATCH
+            if (msg.t === 'MESSAGE_CREATE' && msg.d) {
+              try { handleIncomingVcChatMessage(msg.d); } catch (e) {}
+            }
             if (msg.t === 'READY') {
               clearTimeout(timeout);
               this.userId = msg.d.user.id;
@@ -2770,6 +2825,8 @@ async function startAmp(){
     <div style="margin-top:6px;color:var(--success);font-size:.84rem;font-weight:700">🔴 LIVE MIC &amp; AUDIO BROADCAST ACTIVE — Speak in your mic or play audio/soundpad into VC!</div>`;
     toast(`${connected}/${items.length} accounts connected! Mic &amp; Audio Player ready.`,'🎙️');
     updateDiscordProfileActivity('Broadcasting Voice in VC ⚡', 'D4Hz WEB — High Frequency Audio', true);
+    renderVcChatSenders();
+    refreshVcChatHistory();
   }else{
     const errText = lastErrorMsg ? `<br><span style="font-size:.78rem;color:var(--muted);display:block;margin-top:4px">${esc(lastErrorMsg)}</span>` : '';
     sumEl.innerHTML=`<span style="color:#ff6680">❌ All accounts failed to connect.</span>${errText}`;
@@ -2786,6 +2843,10 @@ function stopAmp(){
   BackgroundKeepalive.stop();
   stopMicStreaming();
   stopAudioPlayback();
+  if (vcChatHistoryTimer) {
+    clearInterval(vcChatHistoryTimer);
+    vcChatHistoryTimer = null;
+  }
   const items=S.mode==='accounts'?S.accounts:S.bots;
   const guildId=S.server?S.server.id:null;
 
@@ -2820,6 +2881,222 @@ function stopAmp(){
   document.getElementById('vc-id').value='';
   toast('All accounts disconnected from VC','⏹');
 }
+
+// ══════════════════════════════════════════════════════════
+//  VOICE CHANNEL TEXT CHAT (MULTI-ACCOUNT)
+// ══════════════════════════════════════════════════════════
+let vcChatHistoryTimer = null;
+const seenVcChatMsgIds = new Set();
+
+function renderVcChatSenders() {
+  const sel = document.getElementById('vc-chat-sender');
+  if (!sel) return;
+  const items = S.mode === 'accounts' ? S.accounts : S.bots;
+  const currentVal = sel.value;
+
+  let html = `<option value="all">⚡ ALL Connected Accounts (${items.length} accounts broadcast)</option>`;
+  items.forEach((item, idx) => {
+    const role = item.isBot ? 'Bot' : 'Account';
+    html += `<option value="${idx}">👤 [${role}] ${esc(item.username || 'Account #' + (idx + 1))}</option>`;
+  });
+  sel.innerHTML = html;
+  if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
+    sel.value = currentVal;
+  }
+}
+
+function handleIncomingVcChatMessage(msg) {
+  if (!msg || !msg.channel_id) return;
+  const vcId = (document.getElementById('vc-id') ? document.getElementById('vc-id').value.trim() : '');
+  if (vcId && msg.channel_id !== vcId) return;
+
+  if (seenVcChatMsgIds.has(msg.id)) return;
+  seenVcChatMsgIds.add(msg.id);
+
+  const box = document.getElementById('vc-chat-box');
+  if (!box) return;
+
+  if (box.querySelector('.vc-chat-empty')) {
+    box.innerHTML = '';
+  }
+
+  const el = createChatMessageElement(msg);
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+
+function createChatMessageElement(m) {
+  const div = document.createElement('div');
+  div.style.display = 'flex';
+  div.style.gap = '10px';
+  div.style.alignItems = 'flex-start';
+  div.style.padding = '6px 8px';
+  div.style.borderRadius = '6px';
+  div.style.background = 'rgba(255,255,255,.03)';
+  div.style.border = '1px solid rgba(255,255,255,.05)';
+  div.dataset.msgId = m.id;
+
+  const author = m.author || { username: 'Unknown', avatar: null, id: '0' };
+  const av = author.avatar
+    ? `https://cdn.discordapp.com/avatars/${author.id}/${author.avatar}.png?size=32`
+    : 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+  const timeStr = m.timestamp
+    ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '';
+
+  div.innerHTML = `
+    <img src="${av}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;margin-top:2px" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <span style="font-weight:700;color:#fff;font-size:.78rem">${esc(author.username)}</span>
+        ${author.bot ? '<span class="badge badge-b" style="font-size:.58rem;padding:1px 4px">BOT</span>' : ''}
+        <span style="font-size:.66rem;color:rgba(255,255,255,.35)">${esc(timeStr)}</span>
+      </div>
+      <div style="color:rgba(255,255,255,.88);font-size:.8rem;word-break:break-word;line-height:1.4">${esc(m.content || '')}</div>
+    </div>
+  `;
+  return div;
+}
+
+async function refreshVcChatHistory() {
+  const vcId = (document.getElementById('vc-id') ? document.getElementById('vc-id').value.trim() : '');
+  const box = document.getElementById('vc-chat-box');
+  if (!vcId) {
+    if (box) box.innerHTML = '<div class="vc-chat-empty" style="color:var(--muted);text-align:center;margin:auto;font-size:.75rem">Please enter a Voice Channel ID above to view chat.</div>';
+    return;
+  }
+
+  const items = S.mode === 'accounts' ? S.accounts : S.bots;
+  const token = items.length > 0 ? items[0].token : '';
+  const isBot = items.length > 0 ? !!items[0].isBot : false;
+
+  try {
+    let messages = null;
+    try {
+      const r = await fetch(`${RELAY_BASE}/chat-history?channelId=${encodeURIComponent(vcId)}&token=${encodeURIComponent(token)}&isBot=${isBot}`);
+      if (r.ok) {
+        messages = await r.json();
+      }
+    } catch (e) {
+      if (token) {
+        const auth = isBot ? (token.startsWith('Bot ') ? token : `Bot ${token}`) : (token.startsWith('Bot ') ? token.slice(4).trim() : token);
+        const r2 = await fetch(`https://discord.com/api/v10/channels/${encodeURIComponent(vcId)}/messages?limit=30`, {
+          headers: { 'Authorization': auth }
+        });
+        if (r2.ok) messages = await r2.json();
+      }
+    }
+
+    if (!Array.isArray(messages)) return;
+    if (!box) return;
+
+    if (messages.length === 0) {
+      box.innerHTML = '<div class="vc-chat-empty" style="color:var(--muted);text-align:center;margin:auto;font-size:.75rem">No messages in this voice channel text chat yet. Start the conversation below!</div>';
+      return;
+    }
+
+    const sorted = [...messages].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const wasAtBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 40;
+
+    box.innerHTML = '';
+    sorted.forEach(m => {
+      seenVcChatMsgIds.add(m.id);
+      box.appendChild(createChatMessageElement(m));
+    });
+
+    if (wasAtBottom || box.scrollTop === 0) {
+      box.scrollTop = box.scrollHeight;
+    }
+  } catch (err) {
+    console.error('Failed to refresh VC chat history:', err);
+  }
+}
+
+async function sendVcChatMessage() {
+  const inp = document.getElementById('vc-chat-input');
+  const btn = document.getElementById('vc-chat-send-btn');
+  const statusEl = document.getElementById('vc-chat-status');
+  const sel = document.getElementById('vc-chat-sender');
+  const staggerChk = document.getElementById('vc-chat-stagger');
+  const vcId = (document.getElementById('vc-id') ? document.getElementById('vc-id').value.trim() : '');
+
+  if (!vcId) {
+    toast('Enter a Voice Channel ID first','⚠️');
+    return;
+  }
+  const text = (inp ? inp.value.trim() : '');
+  if (!text) return;
+
+  const items = S.mode === 'accounts' ? S.accounts : S.bots;
+  if (!items.length) {
+    toast('No accounts added yet','⚠️');
+    return;
+  }
+
+  const senderMode = sel ? sel.value : 'all';
+  let targetAccounts = [];
+  if (senderMode === 'all') {
+    targetAccounts = items.map(a => ({ token: a.token, username: a.username, isBot: !!a.isBot }));
+  } else {
+    const idx = parseInt(senderMode, 10);
+    const chosen = items[idx];
+    if (chosen) {
+      targetAccounts = [{ token: chosen.token, username: chosen.username, isBot: !!chosen.isBot }];
+    } else {
+      targetAccounts = items.map(a => ({ token: a.token, username: a.username, isBot: !!a.isBot }));
+    }
+  }
+
+  const staggerMs = (staggerChk && staggerChk.checked) ? 250 : 50;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '⏳ SENDING...';
+  }
+  if (statusEl) {
+    statusEl.innerHTML = `<span style="color:#4a9eff">⚡ Sending message to VC as <strong>${targetAccounts.length}</strong> account${targetAccounts.length > 1 ? 's' : ''}...</span>`;
+  }
+
+  try {
+    const res = await fetch(`${RELAY_BASE}/send-chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accounts: targetAccounts,
+        channelId: vcId,
+        message: text,
+        staggerMs
+      })
+    });
+
+    const data = await res.json();
+    if (data.ok) {
+      const successCount = (data.results || []).filter(r => r.ok).length;
+      if (inp) inp.value = '';
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color:var(--success)">✅ Successfully sent as <strong>${successCount}/${targetAccounts.length}</strong> accounts!</span>`;
+        setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 4000);
+      }
+      toast(`Message sent via ${successCount} account${successCount > 1 ? 's' : ''}!`, '💬');
+      await refreshVcChatHistory();
+    } else {
+      throw new Error(data.error || 'Failed to send message');
+    }
+  } catch (err) {
+    console.error('sendVcChatMessage error:', err);
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:#ff6680">❌ Error: ${esc(err.message)}</span>`;
+    }
+    toast('Error sending message: ' + err.message, '❌');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '✉️ SEND CHAT';
+    }
+  }
+}
+
 
 
 // ============================================================

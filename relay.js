@@ -31,6 +31,20 @@ const PORT = 7432;
 const activeClients = new Map(); // token -> NativeVoiceClient
 const voiceStatesByGuild = new Map(); // guildId -> Map(userId, voiceState)
 let currentSession = null;
+const recentVoiceChatCache = new Map(); // channelId -> Array of message objects (max 60)
+
+function addRelayChatMessage(msg) {
+  if (!msg || !msg.channel_id) return;
+  const chId = String(msg.channel_id);
+  if (!recentVoiceChatCache.has(chId)) {
+    recentVoiceChatCache.set(chId, []);
+  }
+  const arr = recentVoiceChatCache.get(chId);
+  if (!arr.some(m => m.id === msg.id)) {
+    arr.push(msg);
+    if (arr.length > 60) arr.shift();
+  }
+}
 
 // ══════════════════════════════════════════════════════════
 //  DISCORD PROFILE ACTIVITY & RICH PRESENCE (DEATH.gif)
@@ -357,7 +371,14 @@ class NativeVoiceClient {
                 this._tryConnectVoiceWs();
               }
             }
+
+            if (msg.t === 'MESSAGE_CREATE' && msg.d) {
+              if (String(msg.d.channel_id) === String(this.channelId)) {
+                addRelayChatMessage(msg.d);
+              }
+            }
             break;
+
           }
         }
       };
@@ -1303,6 +1324,131 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ ok: false, error: e.message }));
       }
     });
+    return;
+  }
+
+  // 1c. POST /send-chat — Send text chat message in Voice Channel via multiple/all accounts
+  if (req.method === 'POST' && (reqUrl.pathname === '/send-chat' || req.url === '/send-chat')) {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', async () => {
+      try {
+        const { accounts, channelId, message, staggerMs } = JSON.parse(body || '{}');
+        if (!channelId || !message || typeof message !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Missing channelId or message content' }));
+          return;
+        }
+
+        const cleanChannelId = String(channelId).trim();
+        const results = [];
+        const delay = typeof staggerMs === 'number' ? staggerMs : 250;
+
+        for (let i = 0; i < (accounts || []).length; i++) {
+          const acc = accounts[i];
+          try {
+            const authHeader = acc.isBot
+              ? (acc.token.startsWith('Bot ') ? acc.token : `Bot ${acc.token}`)
+              : (acc.token.startsWith('Bot ') ? acc.token.slice(4).trim() : acc.token);
+
+            let resp = await fetch(`https://discord.com/api/v10/channels/${cleanChannelId}/messages`, {
+              method: 'POST',
+              headers: {
+                'Authorization': authHeader,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ content: message })
+            });
+
+            if (resp.status === 429) {
+              const rData = await resp.json().catch(() => ({}));
+              const retryAfter = (rData.retry_after || 1.5) * 1000;
+              await new Promise(r => setTimeout(r, retryAfter + 100));
+              resp = await fetch(`https://discord.com/api/v10/channels/${cleanChannelId}/messages`, {
+                method: 'POST',
+                headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: message })
+              });
+            }
+
+            if (resp.ok) {
+              const msgData = await resp.json();
+              addRelayChatMessage(msgData);
+              results.push({ username: acc.username, ok: true, id: msgData.id });
+            } else {
+              const errData = await resp.json().catch(() => ({}));
+              results.push({ username: acc.username, ok: false, error: errData.message || `HTTP ${resp.status}` });
+            }
+          } catch (err) {
+            results.push({ username: acc.username, ok: false, error: err.message });
+          }
+
+          if (i < accounts.length - 1 && delay > 0) {
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, results }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 1d. GET /chat-history — Fetch recent Voice Channel text messages
+  if (req.method === 'GET' && (reqUrl.pathname === '/chat-history' || req.url.startsWith('/chat-history'))) {
+    const channelId = reqUrl.searchParams.get('channelId');
+    if (!channelId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Missing channelId' }));
+      return;
+    }
+
+    let token = reqUrl.searchParams.get('token');
+    let isBot = reqUrl.searchParams.get('isBot') === 'true';
+
+    if (!token && activeClients.size > 0) {
+      const first = activeClients.values().next().value;
+      if (first) {
+        token = first.token;
+        isBot = first.isBot;
+      }
+    }
+
+    if (!token) {
+      const cached = recentVoiceChatCache.get(String(channelId)) || [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(cached));
+      return;
+    }
+
+    try {
+      const authHeader = isBot
+        ? (token.startsWith('Bot ') ? token : `Bot ${token}`)
+        : (token.startsWith('Bot ') ? token.slice(4).trim() : token);
+
+      const dRes = await fetch(`https://discord.com/api/v10/channels/${encodeURIComponent(channelId)}/messages?limit=35`, {
+        headers: { 'Authorization': authHeader }
+      });
+
+      const data = await dRes.json();
+      let combined = Array.isArray(data) ? [...data] : [];
+      const cached = recentVoiceChatCache.get(String(channelId)) || [];
+      for (const m of cached) {
+        if (!combined.some(existing => existing.id === m.id)) {
+          combined.push(m);
+        }
+      }
+      res.writeHead(dRes.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(combined));
+    } catch (e) {
+      const cached = recentVoiceChatCache.get(String(channelId)) || [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(cached));
+    }
     return;
   }
 
